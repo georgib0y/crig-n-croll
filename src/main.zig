@@ -10,7 +10,7 @@ const log = std.log;
 pub const std_options = .{ .log_level = std.log.Level.debug };
 
 pub fn main() !void {
-    util.init();
+    try util.init();
 
     const depth: usize = 3;
 

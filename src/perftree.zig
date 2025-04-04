@@ -69,7 +69,7 @@ fn perftree_root(w: anytype, b: Board, depth: usize) !void {
 }
 
 pub fn main() !void {
-    util.init();
+    try util.init();
 
     var it = std.process.args();
     _ = it.skip();

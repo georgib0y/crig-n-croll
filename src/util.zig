@@ -9,9 +9,10 @@ const Move = movegen.Move;
 const MoveType = movegen.MoveType;
 const magic = @import("magic.zig");
 
-pub fn init() void {
+pub fn init() !void {
+    try magic.gen_magics();
+    magic.gen_movetables();
     movegen.init_moves();
-    magic.init_magics();
 }
 
 fn write_sq(w: anytype, sq: usize) !void {
