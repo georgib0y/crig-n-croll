@@ -4,7 +4,6 @@ const log = std.log;
 const movegen = @import("movegen.zig");
 const MoveType = movegen.MoveType;
 const Move = movegen.Move;
-const magic = @import("magic.zig");
 const util = @import("util.zig");
 
 pub const BB = u64;
@@ -183,6 +182,8 @@ pub const Board = struct {
         return Piece.NONE;
     }
 
+    // pub fn _get_piece(self: *const Board, sq: usize) Piece {}
+
     pub fn can_kingside(self: *const Board) bool {
         const shift: u3 = (2 - 2 * @as(u3, @intCast(@intFromEnum(self.ctm))));
         return (self.castling >> shift) & 0x2 > 0;
@@ -203,10 +204,10 @@ pub const Board = struct {
         atts |= movegen.king_move(sq) & self.piece_bb(Piece.KING, attackers);
 
         const rq: BB = self.piece_bb(Piece.ROOK, attackers) | self.piece_bb(Piece.QUEEN, attackers);
-        atts |= magic.lookup_rook(self.all_bb(), sq) & rq;
+        atts |= movegen.lookup_rook(self.all_bb(), sq) & rq;
 
         const bq: BB = self.piece_bb(Piece.BISHOP, attackers) | self.piece_bb(Piece.QUEEN, attackers);
-        atts |= magic.lookup_bishop(self.all_bb(), sq) & bq;
+        atts |= movegen.lookup_bishop(self.all_bb(), sq) & bq;
 
         return atts;
     }

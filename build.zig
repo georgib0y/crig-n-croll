@@ -15,11 +15,25 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
+    // generate the magics at build time
+    const movegen = b.addExecutable(.{
+        .name = "movegen",
+        .root_source_file = b.path("src/build_movegen.zig"),
+        .target = b.graph.host,
+    });
+
+    const movegen_step = b.addRunArtifact(movegen);
+    const movegen_out = movegen_step.addOutputFileArg("built_movegen.zig");
+
     const exe = b.addExecutable(.{
         .name = "crig_n_croll",
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+    });
+
+    exe.root_module.addAnonymousImport("built_movegen", .{
+        .root_source_file = movegen_out,
     });
 
     // This declares intent for the executable to be installed into the
@@ -72,9 +86,9 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    pt_exe.addIncludePath(b.path("src_c"));
-    pt_exe.addCSourceFiles(.{ .root = b.path("src_c"), .files = &[_][]const u8{"magic.c"} });
-    pt_exe.linkLibC();
+    pt_exe.root_module.addAnonymousImport("built_movegen", .{
+        .root_source_file = movegen_out,
+    });
 
     b.installArtifact(pt_exe);
     const pt_cmd = b.addRunArtifact(pt_exe);

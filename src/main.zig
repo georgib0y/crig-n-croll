@@ -4,15 +4,12 @@ const board = @import("board.zig");
 const Board = board.Board;
 const movegen = @import("movegen.zig");
 const MoveList = movegen.MoveList;
-const magic = @import("magic.zig");
 const util = @import("util.zig");
 const log = std.log;
 
 pub const std_options = .{ .log_level = std.log.Level.debug };
 
 pub fn main() !void {
-    try util.init();
-
     const depth: usize = 6;
     var b = board.default_board();
 
@@ -24,6 +21,8 @@ pub fn main() !void {
     std.debug.print("depth: {d}\tmovecount: {d}\ttook {d}ms", .{ depth, mc, dur / std.time.ns_per_ms });
 }
 
+var board_data: [10]Board = undefined;
+
 fn perft(b: *Board, depth: usize) usize {
     if (depth == 0) {
         return 1;
@@ -34,15 +33,15 @@ fn perft(b: *Board, depth: usize) usize {
     movegen.gen_moves(&ml, b, checked);
 
     var mc: usize = 0;
-    var next: Board = undefined;
+    const next: *Board = &board_data[depth];
     while (ml.next()) |m| {
-        b.copy_make(&next, m);
+        b.copy_make(next, m);
 
-        if (!movegen.is_legal_move(&next, m, checked)) {
+        if (!movegen.is_legal_move(next, m, checked)) {
             continue;
         }
 
-        mc += perft(&next, depth - 1);
+        mc += perft(next, depth - 1);
     }
 
     return mc;

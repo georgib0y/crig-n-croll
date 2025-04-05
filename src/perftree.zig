@@ -1,7 +1,6 @@
 const std = @import("std");
 const log = std.log;
 
-const util = @import("util.zig");
 const board = @import("board.zig");
 const Board = board.Board;
 const movegen = @import("movegen.zig");
@@ -69,8 +68,6 @@ fn perftree_root(w: anytype, b: *Board, depth: usize) !void {
 }
 
 pub fn main() !void {
-    try util.init();
-
     var it = std.process.args();
     _ = it.skip();
 

@@ -9,9 +9,18 @@ const square = board.square;
 const Piece = board.Piece;
 const File = board.File;
 const Rank = board.Rank;
-const magic = @import("magic.zig");
 const util = @import("util.zig");
 const log_bb = util.log_bb;
+
+const built_movegen = @import("built_movegen");
+const pawn_attack_table = built_movegen.pawn_attack_table;
+const knight_move_table = built_movegen.knight_move_table;
+const king_move_table = built_movegen.king_move_table;
+const super_moves = built_movegen.super_moves;
+const rook_magics = built_movegen.rook_magics;
+const rook_move_table = built_movegen.rook_move_table;
+const bishop_magics = built_movegen.bishop_magics;
+const bishop_move_table = built_movegen.bishop_move_table;
 
 const NO_SQUARES = 0;
 const ALL_SQUARES = 0xFFFFFFFFFFFFFFFF;
@@ -19,88 +28,6 @@ const ALL_SQUARES = 0xFFFFFFFFFFFFFFFF;
 const PROMO_CAP_MTS = [4]MoveType{ MoveType.NPROMOCAP, MoveType.RPROMOCAP, MoveType.BPROMOCAP, MoveType.QPROMOCAP };
 const PROMO_PIECES_W = [4]Piece{ Piece.KNIGHT, Piece.ROOK, Piece.BISHOP, Piece.QUEEN };
 const PROMO_PIECES_B = [4]Piece{ Piece.KNIGHT_B, Piece.ROOK_B, Piece.BISHOP_B, Piece.QUEEN_B };
-
-var knight_move_table: [64]BB = undefined;
-
-// TODO could move this into the build scriptx
-fn init_knight_move_table() void {
-    for (0..64) |i| {
-        var bb: BB = 0;
-        bb |= (square(i) & ~@intFromEnum(File.FA) & ~@intFromEnum(File.FB)) << 6;
-        bb |= (square(i) & ~@intFromEnum(File.FA)) << 15;
-        bb |= (square(i) & ~@intFromEnum(File.FH)) << 17;
-        bb |= (square(i) & ~@intFromEnum(File.FG) & ~@intFromEnum(File.FH)) << 10;
-        bb |= (square(i) & ~@intFromEnum(File.FH) & ~@intFromEnum(File.FG)) >> 6;
-        bb |= (square(i) & ~@intFromEnum(File.FH)) >> 15;
-        bb |= (square(i) & ~@intFromEnum(File.FA)) >> 17;
-        bb |= (square(i) & ~@intFromEnum(File.FA) & ~@intFromEnum(File.FB)) >> 10;
-
-        knight_move_table[i] = bb;
-    }
-}
-
-var king_move_table: [64]BB = undefined;
-
-fn init_king_move_table() void {
-    for (0..64) |i| {
-        var bb: BB = 0;
-        const k_clear_a = square(i) & ~@intFromEnum(File.FA);
-        const k_clear_h = square(i) & ~@intFromEnum(File.FH);
-
-        bb |= square(i) << 8;
-        bb |= square(i) >> 8;
-        bb |= k_clear_a << 7;
-        bb |= k_clear_a >> 1;
-        bb |= k_clear_a >> 9;
-        bb |= k_clear_h << 9;
-        bb |= k_clear_h << 1;
-        bb |= k_clear_h >> 7;
-
-        king_move_table[i] = bb;
-    }
-}
-
-var pawn_attack_table: [128]BB = undefined;
-
-fn init_pawn_attacks() void {
-    for (0..64) |i| {
-        const sq = square(i);
-
-        // white
-        if (sq & ~@intFromEnum(Rank.R8) > 0) {
-            pawn_attack_table[i] = (sq & ~@intFromEnum(File.FA)) << 7 | (sq & ~@intFromEnum(File.FH)) << 9;
-        }
-
-        // black
-        if (sq & ~@intFromEnum(Rank.R1) > 0) {
-            pawn_attack_table[i + 64] = (sq & ~@intFromEnum(File.FH)) >> 7 | (sq & ~@intFromEnum(File.FA)) >> 9;
-        }
-    }
-}
-
-pub fn init_moves() void {
-    init_pawn_attacks();
-    init_knight_move_table();
-    init_king_move_table();
-}
-
-var super_moves: [64]BB = undefined;
-
-// requires all other moves and magics to be initialised
-pub fn init_super_moves() void {
-    for (0..64) |sq| {
-        var m: BB = 0;
-        m |= knight_move(sq);
-        m |= king_move(sq);
-        m |= magic.lookup_rook(NO_SQUARES, sq);
-        m |= magic.lookup_bishop(NO_SQUARES, sq);
-        super_moves[sq] = m;
-    }
-}
-
-pub fn super_move(sq: usize) BB {
-    return super_moves[sq];
-}
 
 pub const MoveType = enum(u8) {
     QUIET,
@@ -465,15 +392,15 @@ fn king_move_wrapper(unused_occ: BB, from: usize) BB {
 }
 
 fn rook_move_wrapper(occ: BB, from: usize) BB {
-    return magic.lookup_rook(occ, from);
+    return lookup_rook(occ, from);
 }
 
 fn bishop_move_wrapper(occ: BB, from: usize) BB {
-    return magic.lookup_bishop(occ, from);
+    return lookup_bishop(occ, from);
 }
 
 fn queen_move_wrapper(occ: BB, from: usize) BB {
-    return magic.lookup_queen(occ, from);
+    return lookup_queen(occ, from);
 }
 
 pub inline fn pawn_att(sq: usize, ctm: Colour) BB {
@@ -555,25 +482,25 @@ fn pinned_sqs(b: *const Board, king_sq: usize) BB {
 
     const rook_queens: BB = b.piece_bb(Piece.ROOK, opp) | b.piece_bb(Piece.QUEEN, opp);
     var rq_pinners: BB =
-        magic.lookup_rook_xray(all_occ, ctm_occ, king_sq) & rook_queens;
+        lookup_rook_xray(all_occ, ctm_occ, king_sq) & rook_queens;
 
     while (rq_pinners > 0) : (rq_pinners &= rq_pinners - 1) {
         const from: BB = @ctz(rq_pinners);
-        pinned |= magic.lookup_rook(all_occ, from);
+        pinned |= lookup_rook(all_occ, from);
     }
 
     const bishop_queens: BB = b.piece_bb(Piece.BISHOP, opp) | b.piece_bb(Piece.QUEEN, opp);
-    var bq_pinners: BB = magic.lookup_bishop_xray(all_occ, ctm_occ, king_sq) &
+    var bq_pinners: BB = lookup_bishop_xray(all_occ, ctm_occ, king_sq) &
         bishop_queens;
 
     while (bq_pinners > 0) : (bq_pinners &= bq_pinners - 1) {
         const from: BB = @ctz(bq_pinners);
-        const lookup = magic.lookup_bishop(all_occ, from);
+        const lookup = lookup_bishop(all_occ, from);
         pinned |= lookup;
     }
 
     if (pinned > 0) {
-        const potential_pins = (magic.lookup_rook(all_occ, king_sq) | magic.lookup_bishop(all_occ, king_sq)) & ctm_occ;
+        const potential_pins = (lookup_rook(all_occ, king_sq) | lookup_bishop(all_occ, king_sq)) & ctm_occ;
         pinned &= potential_pins;
     }
 
@@ -582,11 +509,11 @@ fn pinned_sqs(b: *const Board, king_sq: usize) BB {
 
 fn attacker_ray(b: *const Board, king_sq: usize, att_sq: usize) BB {
     if (king_sq % 8 == att_sq % 8 or king_sq / 8 == att_sq / 8) {
-        return magic.lookup_rook(b.all_bb(), king_sq) &
-            magic.lookup_rook(b.all_bb(), att_sq);
+        return lookup_rook(b.all_bb(), king_sq) &
+            lookup_rook(b.all_bb(), att_sq);
     } else {
-        return magic.lookup_bishop(b.all_bb(), king_sq) &
-            magic.lookup_bishop(b.all_bb(), att_sq);
+        return lookup_bishop(b.all_bb(), king_sq) &
+            lookup_bishop(b.all_bb(), att_sq);
     }
 }
 
@@ -687,4 +614,49 @@ pub fn is_legal_move(b: *const Board, m: Move, checked: bool) bool {
     }
 
     return true;
+}
+
+const RSHIFT = 12; // !
+const BSHIFT = 9;
+
+pub inline fn lookup_bishop(occ: BB, sq: usize) BB {
+    var o = occ;
+    o &= bishop_magics[sq].mask;
+    o = @mulWithOverflow(o, bishop_magics[sq].magic).@"0";
+    o >>= 64 - BSHIFT;
+    return bishop_move_table[sq][o];
+}
+
+pub fn lookup_bishop_xray(occ: BB, blockers: BB, sq: usize) BB {
+    var blk = blockers;
+    const atts = lookup_bishop(occ, sq);
+    blk &= atts;
+    return atts ^ lookup_bishop(occ ^ blk, sq);
+}
+
+pub inline fn lookup_rook(occ: BB, sq: usize) BB {
+    var o = occ;
+    o &= rook_magics[sq].mask;
+    o = @mulWithOverflow(o, rook_magics[sq].magic).@"0";
+    o >>= 64 - RSHIFT;
+    return rook_move_table[sq][o];
+}
+
+pub fn lookup_rook_xray(occ: BB, blockers: BB, sq: usize) BB {
+    var blk = blockers;
+    const atts = lookup_rook(occ, sq);
+    blk &= atts;
+    return atts ^ lookup_rook(occ ^ blk, sq);
+}
+
+pub fn lookup_queen(occ: BB, sq: usize) BB {
+    return lookup_bishop(occ, sq) | lookup_rook(occ, sq);
+}
+
+pub fn rook_mask(sq: usize) BB {
+    return rook_magics[sq].mask;
+}
+
+pub fn bishop_mask(sq: usize) BB {
+    return bishop_magics[sq].mask;
 }

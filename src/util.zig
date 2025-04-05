@@ -7,13 +7,6 @@ const Piece = board.Piece;
 const movegen = @import("movegen.zig");
 const Move = movegen.Move;
 const MoveType = movegen.MoveType;
-const magic = @import("magic.zig");
-
-pub fn init() !void {
-    try magic.gen_magics();
-    movegen.init_moves();
-    movegen.init_super_moves();
-}
 
 fn write_sq(w: anytype, sq: usize) !void {
     if (sq > 64) {
