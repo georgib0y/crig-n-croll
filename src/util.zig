@@ -11,8 +11,8 @@ const magic = @import("magic.zig");
 
 pub fn init() !void {
     try magic.gen_magics();
-    magic.gen_movetables();
     movegen.init_moves();
+    movegen.init_super_moves();
 }
 
 fn write_sq(w: anytype, sq: usize) !void {

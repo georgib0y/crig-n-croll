@@ -11,10 +11,8 @@ pub const BB = u64;
 
 const CastleState = u8;
 
-pub inline fn square(idx: usize) BB {
-    const shift: u6 = @intCast(idx);
-    const sq: BB = 1;
-    return sq << shift;
+pub fn square(idx: usize) BB {
+    return @as(BB, 1) << @as(u6, @intCast(idx));
 }
 
 pub const File = enum(BB) {
@@ -43,7 +41,7 @@ pub const Colour = enum(u8) {
     WHITE = 0,
     BLACK = 1,
 
-    pub fn opp(self: Colour) Colour {
+    pub inline fn opp(self: Colour) Colour {
         return @enumFromInt(@intFromEnum(self) ^ 1);
     }
 };
@@ -146,20 +144,23 @@ pub const Board = struct {
     mg_val: i32,
     eg_val: i32,
 
-    pub fn piece_bb(self: Board, p: Piece, c: ?Colour) BB {
-        return self.pieces[@intFromEnum(p) + @intFromEnum(c orelse Colour.WHITE)];
+    pub inline fn piece_bb(self: *const Board, p: Piece, c: Colour) BB {
+        const pidx: usize = @intFromEnum(p);
+        const cidx: usize = @intFromEnum(c);
+        const idx: usize = pidx + cidx;
+        return self.pieces[idx];
     }
 
-    pub fn col_bb(self: Board, c: Colour) BB {
+    pub fn col_bb(self: *const Board, c: Colour) BB {
         return self.util[@intFromEnum(c)];
     }
 
-    pub fn all_bb(self: Board) BB {
+    pub inline fn all_bb(self: *const Board) BB {
         return self.util[@intFromEnum(UtilBB.ALL)];
     }
 
-    pub fn toggle_piece(self: *Board, p: Piece, c: ?Colour, bb: BB) void {
-        const idx = @intFromEnum(p) + @intFromEnum(c orelse Colour.WHITE);
+    pub fn toggle_piece(self: *Board, p: Piece, c: Colour, bb: BB) void {
+        const idx = @intFromEnum(p) + @intFromEnum(c);
         self.pieces[idx] ^= bb;
     }
 
@@ -171,9 +172,9 @@ pub const Board = struct {
         self.util[@intFromEnum(UtilBB.ALL)] ^= bb;
     }
 
-    pub fn get_piece(self: Board, sq: usize) Piece {
+    pub fn get_piece(self: *const Board, sq: usize) Piece {
         const bb = square(sq);
-        inline for (0..self.pieces.len) |i| {
+        for (0..self.pieces.len) |i| {
             if (self.pieces[i] & bb > 0) {
                 return @enumFromInt(i);
             }
@@ -182,17 +183,17 @@ pub const Board = struct {
         return Piece.NONE;
     }
 
-    pub fn can_kingside(self: Board) bool {
+    pub fn can_kingside(self: *const Board) bool {
         const shift: u3 = (2 - 2 * @as(u3, @intCast(@intFromEnum(self.ctm))));
-        return self.castling >> shift & 0x2 > 0;
+        return (self.castling >> shift) & 0x2 > 0;
     }
 
-    pub fn can_queenside(self: Board) bool {
+    pub fn can_queenside(self: *const Board) bool {
         const shift: u3 = (2 - 2 * @as(u3, @intCast(@intFromEnum(self.ctm))));
-        return self.castling >> shift & 1 > 0;
+        return (self.castling >> shift) & 1 > 0;
     }
 
-    pub fn attackers_of_sq(self: Board, sq: usize, attackers: Colour) BB {
+    pub fn attackers_of_sq(self: *const Board, sq: usize, attackers: Colour) BB {
         var atts: BB = 0;
 
         // add pawn attacks, need to get the inverted pawn attacsk for the attacking
@@ -207,33 +208,33 @@ pub const Board = struct {
         const bq: BB = self.piece_bb(Piece.BISHOP, attackers) | self.piece_bb(Piece.QUEEN, attackers);
         atts |= magic.lookup_bishop(self.all_bb(), sq) & bq;
 
-        return 0;
+        return atts;
     }
 
-    pub fn is_in_check(self: Board) bool {
+    pub fn is_in_check(self: *const Board) bool {
         const king_sq: usize = @ctz(self.piece_bb(Piece.KING, self.ctm));
         return self.attackers_of_sq(king_sq, self.ctm.opp()) > 0;
     }
 
     fn set_castle_state(b: *Board, p: Piece, from: usize, to: usize) void {
         // WKINGSIDE 0b1000
-        if ((p == Piece.KING or from == 7 or to == 7) and b.castling & 0x8 > 0) {
-            b.castling &= 0x7; // 0b0111
+        if ((p == Piece.KING or from == 7 or to == 7) and b.castling & 0b1000 > 0) {
+            b.castling &= 0b0111;
         }
 
         // WQUEENSIDE 0b100
-        if ((p == Piece.KING or from == 0 or to == 0) and b.castling & 0x4 > 0) {
-            b.castling &= 0xB; // 0b1011
+        if ((p == Piece.KING or from == 0 or to == 0) and b.castling & 0b0100 > 0) {
+            b.castling &= 0b1011;
         }
 
         // BKINGSIDE 0b10
-        if ((p == Piece.KING_B or from == 63 or to == 63) and b.castling & 0x2 > 0) {
-            b.castling &= 0xD; // 0b1101
+        if ((p == Piece.KING_B or from == 63 or to == 63) and b.castling & 0b0010 > 0) {
+            b.castling &= 0b1101;
         }
 
         // BQUEENSIDE 0b1
-        if ((p == Piece.KING_B or from == 56 or to == 56) and b.castling & 0x1 > 0) {
-            b.castling &= 0xE; // 0b1110
+        if ((p == Piece.KING_B or from == 56 or to == 56) and b.castling & 0b0001 > 0) {
+            b.castling &= 0b1110;
         }
     }
 
@@ -251,7 +252,7 @@ pub const Board = struct {
 
     fn apply_cap(self: *Board, to: usize, xpiece: Piece) void {
         const to_sq = square(to);
-        self.toggle_piece(xpiece, null, to_sq);
+        self.toggle_piece(xpiece, Colour.WHITE, to_sq);
         self.toggle_colour_pieces(self.ctm.opp(), to_sq);
         self.toggle_all_pieces(to_sq);
     }
@@ -266,30 +267,26 @@ pub const Board = struct {
     fn apply_promo(self: *Board, xpiece: Piece, to: usize) void {
         // toggle pawn off and toggle the promo on
         self.toggle_piece(Piece.PAWN, self.ctm, square(to));
-        self.toggle_piece(xpiece, null, square(to));
+        self.toggle_piece(xpiece, Colour.WHITE, square(to));
         self.halfmove = 0;
     }
 
     fn apply_promo_cap(self: *Board, mt: movegen.MoveType, xpiece: Piece, to: usize) void {
         const to_sq: BB = square(to);
-
-        // N_PROMO_CAP (8) - 7 = [1], [1] * 2 + b.colour_to_move == 2 or 3 (knight
-        // idx)
-        // R_PROMO_CAP (9) - 7 = [2], [2] * 2 + b.colour_to_move == 4 or 5 (rook idx)
-        // etc
-
-        const promo_p: Piece = @enumFromInt((@intFromEnum(mt) - 7) * 2 + @intFromEnum(self.ctm));
+        const promo_p: Piece = @enumFromInt((@intFromEnum(mt) - 7) * 2);
 
         // toggle captured piece
-        self.toggle_piece(xpiece, null, to_sq);
+        self.toggle_piece(xpiece, Colour.WHITE, to_sq);
         self.toggle_colour_pieces(self.ctm.opp(), to_sq);
 
         // retoggle piece (as its been replaces by the capturer)
         self.toggle_all_pieces(to_sq);
+
         // toggle pawn off
-        self.toggle_colour_pieces(self.ctm, to_sq);
+        self.toggle_piece(Piece.PAWN, self.ctm, to_sq);
+
         // toggle promo on
-        self.toggle_piece(promo_p, null, to_sq);
+        self.toggle_piece(promo_p, self.ctm, to_sq);
 
         self.halfmove = 0;
     }
@@ -313,15 +310,15 @@ pub const Board = struct {
             MoveType.WKINGSIDE => self.apply_castle(Colour.WHITE, 7, 5),
             MoveType.WQUEENSIDE => self.apply_castle(Colour.WHITE, 0, 3),
             MoveType.BKINGSIDE => self.apply_castle(Colour.BLACK, 63, 61),
-            MoveType.BQUEENSIDE => self.apply_castle(Colour.WHITE, 56, 59),
+            MoveType.BQUEENSIDE => self.apply_castle(Colour.BLACK, 56, 59),
             MoveType.PROMO => self.apply_promo(xpiece, to),
             MoveType.NPROMOCAP, MoveType.RPROMOCAP, MoveType.BPROMOCAP, MoveType.QPROMOCAP => self.apply_promo_cap(mt, xpiece, to),
             MoveType.EP => self.apply_ep(to),
         }
     }
 
-    pub fn copy_make(self: Board, noalias dest: *Board, m: Move) void {
-        dest.* = self;
+    pub fn copy_make(self: *const Board, dest: *Board, m: Move) void {
+        dest.* = self.*;
 
         const from: usize = @intCast(m.from);
         const to: usize = @intCast(m.to);
@@ -330,7 +327,7 @@ pub const Board = struct {
 
         const from_to: BB = square(from) | square(to);
 
-        dest.toggle_piece(piece, null, from_to);
+        dest.toggle_piece(piece, Colour.WHITE, from_to);
         dest.toggle_colour_pieces(dest.ctm, from_to);
         dest.toggle_all_pieces(from_to);
 

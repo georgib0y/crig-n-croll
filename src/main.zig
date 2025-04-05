@@ -3,6 +3,7 @@ const std = @import("std");
 const board = @import("board.zig");
 const Board = board.Board;
 const movegen = @import("movegen.zig");
+const MoveList = movegen.MoveList;
 const magic = @import("magic.zig");
 const util = @import("util.zig");
 const log = std.log;
@@ -12,22 +13,24 @@ pub const std_options = .{ .log_level = std.log.Level.debug };
 pub fn main() !void {
     try util.init();
 
-    const depth: usize = 3;
+    const depth: usize = 6;
+    var b = board.default_board();
 
-    const b = board.default_board();
-    const mc = perft(b, depth);
+    var timer = try std.time.Timer.start();
 
-    std.debug.print("depth: {d}\tmovecount: {d}\n", .{ depth, mc });
+    const mc = perft(&b, depth);
+
+    const dur = timer.read();
+    std.debug.print("depth: {d}\tmovecount: {d}\ttook {d}ms", .{ depth, mc, dur / std.time.ns_per_ms });
 }
 
-fn perft(b: Board, depth: usize) usize {
+fn perft(b: *Board, depth: usize) usize {
     if (depth == 0) {
-        log.debug("here", .{});
         return 1;
     }
 
     const checked = b.is_in_check();
-    var ml = movegen.new_move_list();
+    var ml = movegen.new_move_list(depth);
     movegen.gen_moves(&ml, b, checked);
 
     var mc: usize = 0;
@@ -35,13 +38,11 @@ fn perft(b: Board, depth: usize) usize {
     while (ml.next()) |m| {
         b.copy_make(&next, m);
 
-        m.log(log.debug);
-        if (!movegen.is_legal_move(next, m, checked)) {
+        if (!movegen.is_legal_move(&next, m, checked)) {
             continue;
         }
 
-        next.log(log.debug);
-        mc += perft(b, depth - 1);
+        mc += perft(&next, depth - 1);
     }
 
     return mc;

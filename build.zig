@@ -22,9 +22,6 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    exe.addIncludePath(b.path("src_c"));
-    exe.addCSourceFiles(.{ .root = b.path("src_c"), .files = &[_][]const u8{"magic.c"} });
-    exe.linkLibC();
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
     // step when running `zig build`).

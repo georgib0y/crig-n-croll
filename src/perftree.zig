@@ -10,7 +10,7 @@ fn process_moves(b: Board, move_str: []const u8) !Board {
     var it = std.mem.splitScalar(u8, move_str, ' ');
     var curr = b;
     while (it.next()) |s| {
-        const m = try movegen.new_move_from_uci(s, curr);
+        const m = try movegen.new_move_from_uci(s, &curr);
         var next: Board = undefined;
         curr.copy_make(&next, m);
         curr = next;
@@ -19,14 +19,14 @@ fn process_moves(b: Board, move_str: []const u8) !Board {
     return curr;
 }
 
-fn perftree(b: Board, depth: usize) usize {
+fn perftree(b: *Board, depth: usize) usize {
     if (depth == 0) {
         return 1;
     }
 
     var mc: usize = 0;
 
-    var ml = movegen.new_move_list();
+    var ml = movegen.new_move_list(depth);
     const checked = b.is_in_check();
     movegen.gen_moves(&ml, b, checked);
 
@@ -34,20 +34,20 @@ fn perftree(b: Board, depth: usize) usize {
     while (ml.next()) |m| {
         b.copy_make(&next, m);
 
-        if (!movegen.is_legal_move(next, m, checked)) {
+        if (!movegen.is_legal_move(&next, m, checked)) {
             continue;
         }
 
-        mc += perftree(next, depth - 1);
+        mc += perftree(&next, depth - 1);
     }
 
     return mc;
 }
 
-fn perftree_root(w: anytype, b: Board, depth: usize) !void {
+fn perftree_root(w: anytype, b: *Board, depth: usize) !void {
     var total_mc: usize = 0;
 
-    var ml = movegen.new_move_list();
+    var ml = movegen.new_move_list(depth);
     const checked = b.is_in_check();
     movegen.gen_moves(&ml, b, checked);
 
@@ -55,11 +55,11 @@ fn perftree_root(w: anytype, b: Board, depth: usize) !void {
     while (ml.next()) |m| {
         b.copy_make(&next, m);
 
-        if (!movegen.is_legal_move(next, m, checked)) {
+        if (!movegen.is_legal_move(&next, m, checked)) {
             continue;
         }
 
-        const mc = perftree(next, depth - 1);
+        const mc = perftree(&next, depth - 1);
         total_mc += mc;
         try m.as_uci_str(w);
         try std.fmt.format(w, " {d}\n", .{mc});
@@ -80,17 +80,16 @@ pub fn main() !void {
     arg = it.next() orelse return error.NoFenArg;
     var b = try board.board_from_fen(arg);
 
-    b.log(log.debug);
-
     if (it.next()) |move_str| {
         b = try process_moves(b, move_str);
     }
 
+    log.debug("perftree position is:", .{});
     b.log(log.debug);
 
     if (it.skip()) {
         return error.TooManyArgs;
     }
 
-    try perftree_root(std.io.getStdOut().writer(), b, depth);
+    try perftree_root(std.io.getStdOut().writer(), &b, depth);
 }
