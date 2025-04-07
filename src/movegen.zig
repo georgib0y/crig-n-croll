@@ -17,9 +17,9 @@ const pawn_attack_table = built_movegen.pawn_attack_table;
 const knight_move_table = built_movegen.knight_move_table;
 const king_move_table = built_movegen.king_move_table;
 const super_moves = built_movegen.super_moves;
-const rook_magics = built_movegen.rook_magics;
+pub const rook_magics = built_movegen.rook_magics;
 const rook_move_table = built_movegen.rook_move_table;
-const bishop_magics = built_movegen.bishop_magics;
+pub const bishop_magics = built_movegen.bishop_magics;
 const bishop_move_table = built_movegen.bishop_move_table;
 
 const NO_SQUARES = 0;
@@ -174,7 +174,7 @@ pub const MoveList = struct {
 
     // TODO score moves
 
-    fn add_pawn_moves_quiet(self: *MoveList, pawns: BB, piece: Piece, to_offset: comptime_int, promo: Piece, mt: MoveType) void {
+    fn add_pawn_moves_quiet(self: *MoveList, pawns: BB, comptime piece: Piece, comptime to_offset: comptime_int, promo: Piece, comptime mt: MoveType) void {
         var p = pawns;
         while (p > 0) : (p &= p - 1) {
             const from: usize = @ctz(p);
@@ -183,7 +183,7 @@ pub const MoveList = struct {
         }
     }
 
-    fn add_pawn_moves_cap(self: *MoveList, b: *const Board, pawns: BB, piece: Piece, to_offset: comptime_int, mt: MoveType) void {
+    fn add_pawn_moves_cap(self: *MoveList, b: *const Board, pawns: BB, comptime piece: Piece, comptime to_offset: comptime_int, comptime mt: MoveType) void {
         var p = pawns;
         while (p > 0) : (p &= p - 1) {
             const from: usize = @ctz(p);
@@ -252,14 +252,14 @@ fn wpawn_attack(b: *const Board, ml: *MoveList, pin_sqs: BB, target_sqs: BB) voi
 
     const att_left_promo = att_left & @intFromEnum(Rank.R7);
     if (att_left_promo > 0) {
-        for (PROMO_CAP_MTS) |mt| {
+        inline for (PROMO_CAP_MTS) |mt| {
             ml.add_pawn_moves_cap(b, att_left_promo, Piece.PAWN, 7, mt);
         }
     }
 
     const att_right_promo = att_right & @intFromEnum(Rank.R7);
     if (att_right_promo > 0) {
-        for (PROMO_CAP_MTS) |mt| {
+        inline for (PROMO_CAP_MTS) |mt| {
             ml.add_pawn_moves_cap(b, att_right_promo, Piece.PAWN, 9, mt);
         }
     }
@@ -316,14 +316,14 @@ fn bpawn_attack(b: *const Board, ml: *MoveList, pin_sqs: BB, target_sqs: BB) voi
 
     const att_left_promo = att_left & @intFromEnum(Rank.R2);
     if (att_left_promo > 0) {
-        for (PROMO_CAP_MTS) |mt| {
+        inline for (PROMO_CAP_MTS) |mt| {
             ml.add_pawn_moves_cap(b, att_left_promo, Piece.PAWN_B, -9, mt);
         }
     }
 
     const att_right_promo = att_right & @intFromEnum(Rank.R2);
     if (att_right_promo > 0) {
-        for (PROMO_CAP_MTS) |mt| {
+        inline for (PROMO_CAP_MTS) |mt| {
             ml.add_pawn_moves_cap(b, att_right_promo, Piece.PAWN_B, -7, mt);
         }
     }
@@ -404,8 +404,7 @@ fn queen_move_wrapper(occ: BB, from: usize) BB {
 }
 
 pub inline fn pawn_att(sq: usize, ctm: Colour) BB {
-    const mul: usize = if (ctm == Colour.WHITE) 0 else 1;
-    return pawn_attack_table[sq + (64 * mul)];
+    return pawn_attack_table[sq + (64 * @intFromEnum(ctm))];
 }
 
 fn king_castle(ml: *MoveList, b: *const Board) void {

@@ -195,8 +195,10 @@ pub const Board = struct {
     }
 
     pub fn attackers_of_sq(self: *const Board, sq: usize, attackers: Colour) BB {
-        var atts: BB = 0;
+        @prefetch(&movegen.rook_magics[sq], .{});
+        @prefetch(&movegen.bishop_magics[sq], .{});
 
+        var atts: BB = 0;
         // add pawn attacks, need to get the inverted pawn attacsk for the attacking
         // colour as we are working backwards from sq
         atts |= movegen.pawn_att(sq, attackers.opp()) & self.piece_bb(Piece.PAWN, attackers);
