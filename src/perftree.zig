@@ -10,7 +10,7 @@ fn process_moves(b: Board, move_str: []const u8) !Board {
     var curr = b;
     while (it.next()) |s| {
         const m = try movegen.new_move_from_uci(s, &curr);
-        var next: Board = undefined;
+        var next: Board = curr;
         curr.copy_make(&next, m);
         curr = next;
     }
@@ -29,15 +29,18 @@ fn perftree(b: *Board, depth: usize) usize {
     const checked = b.is_in_check();
     movegen.gen_moves(&ml, b, checked);
 
-    var next: Board = undefined;
+    var next: Board = b.*;
     while (ml.next()) |m| {
         b.copy_make(&next, m);
 
         if (!movegen.is_legal_move(&next, m, checked)) {
+            b.copy_unmake(&next, m);
             continue;
         }
 
         mc += perftree(&next, depth - 1);
+
+        b.copy_unmake(&next, m);
     }
 
     return mc;
@@ -50,11 +53,11 @@ fn perftree_root(w: anytype, b: *Board, depth: usize) !void {
     const checked = b.is_in_check();
     movegen.gen_moves(&ml, b, checked);
 
-    var next: Board = undefined;
+    var next: Board = b.*;
     while (ml.next()) |m| {
         b.copy_make(&next, m);
-
         if (!movegen.is_legal_move(&next, m, checked)) {
+            b.copy_unmake(&next, m);
             continue;
         }
 
@@ -62,6 +65,7 @@ fn perftree_root(w: anytype, b: *Board, depth: usize) !void {
         total_mc += mc;
         try m.as_uci_str(w);
         try std.fmt.format(w, " {d}\n", .{mc});
+        b.copy_unmake(&next, m);
     }
 
     try std.fmt.format(w, "\n{d}\n", .{total_mc});

@@ -320,9 +320,8 @@ pub const Board = struct {
         }
     }
 
+    // assumed that dest is already an exact copy of self
     pub fn copy_make(self: *const Board, dest: *Board, m: Move) void {
-        dest.* = self.*;
-
         const from: usize = @intCast(m.from);
         const to: usize = @intCast(m.to);
         const piece: Piece = @enumFromInt(m.piece);
@@ -342,6 +341,40 @@ pub const Board = struct {
         dest.apply_move(to, piece, xpiece, m.mt);
 
         dest.ctm = self.ctm.opp();
+    }
+
+    pub fn copy_unmake(self: *const Board, dest: *Board, m: Move) void {
+        dest.ctm = self.ctm;
+        dest.halfmove = self.halfmove;
+        dest.ep = self.ep;
+        dest.castling = self.castling;
+
+        dest.pieces[m.piece] = self.pieces[m.piece];
+        dest.util[@intFromEnum(self.ctm)] = self.util[@intFromEnum(self.ctm)];
+        dest.util[2] = self.util[2];
+
+        switch (m.mt) {
+            MoveType.CAP => {
+                dest.pieces[m.xpiece] = self.pieces[m.xpiece];
+                dest.util[@intFromEnum(self.ctm.opp())] = self.util[@intFromEnum(self.ctm.opp())];
+            },
+            MoveType.WKINGSIDE, MoveType.WQUEENSIDE => {
+                dest.pieces[@intFromEnum(Piece.ROOK)] = self.pieces[@intFromEnum(Piece.ROOK)];
+            },
+            MoveType.BKINGSIDE, MoveType.BQUEENSIDE => {
+                dest.pieces[@intFromEnum(Piece.ROOK_B)] = self.pieces[@intFromEnum(Piece.ROOK_B)];
+            },
+            MoveType.PROMO => {
+                dest.pieces[m.xpiece] = self.pieces[m.xpiece];
+            },
+            MoveType.NPROMOCAP, MoveType.RPROMOCAP, MoveType.BPROMOCAP, MoveType.QPROMOCAP => {
+                const promo_p: usize = (@intFromEnum(m.mt) - 7) * 2;
+                dest.pieces[promo_p] = self.pieces[promo_p];
+                dest.pieces[m.xpiece] = self.pieces[m.xpiece];
+                dest.util[@intFromEnum(self.ctm.opp())] = self.util[@intFromEnum(self.ctm.opp())];
+            },
+            else => {},
+        }
     }
 
     pub fn log(self: Board, comptime log_fn: fn (comptime []const u8, anytype) void) void {

@@ -21,8 +21,6 @@ pub fn main() !void {
     std.debug.print("depth: {d}\tmovecount: {d}\ttook {d}ms", .{ depth, mc, dur / std.time.ns_per_ms });
 }
 
-var board_data: [10]Board = undefined;
-
 fn perft(b: *Board, depth: usize) usize {
     if (depth == 0) {
         return 1;
@@ -33,15 +31,18 @@ fn perft(b: *Board, depth: usize) usize {
     movegen.gen_moves(&ml, b, checked);
 
     var mc: usize = 0;
-    const next: *Board = &board_data[depth];
+    var next: Board = b.*;
     while (ml.next()) |m| {
-        b.copy_make(next, m);
+        b.copy_make(&next, m);
 
-        if (!movegen.is_legal_move(next, m, checked)) {
+        if (!movegen.is_legal_move(&next, m, checked)) {
+            b.copy_unmake(&next, m);
             continue;
         }
 
-        mc += perft(next, depth - 1);
+        mc += perft(&next, depth - 1);
+
+        b.copy_unmake(&next, m);
     }
 
     return mc;
