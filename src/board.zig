@@ -47,21 +47,21 @@ pub const Colour = enum(u8) {
 
 pub const Piece = enum(u8) {
     PAWN = 0,
-    PAWN_B = 1,
-    KNIGHT = 2,
-    KNIGHT_B = 3,
-    ROOK = 4,
-    ROOK_B = 5,
-    BISHOP = 6,
-    BISHOP_B = 7,
-    QUEEN = 8,
-    QUEEN_B = 9,
-    KING = 10,
+    KNIGHT = 1,
+    ROOK = 2,
+    BISHOP = 3,
+    QUEEN = 4,
+    KING = 5,
+    PAWN_B = 6,
+    KNIGHT_B = 7,
+    ROOK_B = 8,
+    BISHOP_B = 9,
+    QUEEN_B = 10,
     KING_B = 11,
     NONE,
 
     pub fn idx(self: Piece, c: Colour) usize {
-        return @intFromEnum(self) + @intFromEnum(c);
+        return @intFromEnum(self) + (@intFromEnum(c) * 6);
     }
 
     pub fn with_ctm(self: Piece, c: Colour) Piece {
@@ -134,28 +134,43 @@ pub const UtilBB = enum { ALL_W, ALL_B, ALL };
 
 pub const Board = struct {
     pieces: [12]BB,
-    util: [3]BB,
+    white_vec: @Vector(6, BB),
+    black_vec: @Vector(6, BB),
+
+    // util: [2]BB,
     ctm: Colour,
     castling: CastleState,
     ep: u8,
     halfmove: u8,
-    hash: u64,
-    mg_val: i32,
-    eg_val: i32,
+    // hash: u64,
+    // mg_val: i32,
+    // eg_val: i32,
 
     pub inline fn piece_bb(self: *const Board, p: Piece, c: Colour) BB {
         const pidx: usize = @intFromEnum(p);
-        const cidx: usize = @intFromEnum(c);
+        const cidx: usize = @intFromEnum(c) * 6;
         const idx: usize = pidx + cidx;
         return self.pieces[idx];
     }
 
     pub fn col_bb(self: *const Board, c: Colour) BB {
-        return self.util[@intFromEnum(c)];
+        return @reduce(.Or, if (c == Colour.WHITE) self.white_vec else self.black_vec);
+
+        // if (c == Colour.WHITE) {
+        //     const piece_vec: @Vector(6, BB) = self.pieces[0..6].*;
+        //     return @reduce(.Or, piece_vec);
+        // } else {
+        //     const piece_vec: @Vector(6, BB) = self.pieces[6..12].*;
+        //     return @reduce(.Or, piece_vec);
+        // }
+
+        // return self.util[@intFromEnum(c)];
     }
 
     pub inline fn all_bb(self: *const Board) BB {
-        return self.util[@intFromEnum(UtilBB.ALL)];
+        return @reduce(.Or, self.white_vec | self.black_vec);
+
+        // return self.util[0] | self.util[1];
     }
 
     pub fn toggle_piece(self: *Board, p: Piece, c: Colour, bb: BB) void {
@@ -163,15 +178,15 @@ pub const Board = struct {
         self.pieces[idx] ^= bb;
     }
 
-    pub fn toggle_colour_pieces(self: *Board, c: Colour, bb: BB) void {
-        self.util[@intFromEnum(c)] ^= bb;
-    }
+    // pub fn toggle_colour_pieces(self: *Board, c: Colour, bb: BB) void {
+    //     self.util[@intFromEnum(c)] ^= bb;
+    // }
 
-    pub fn toggle_all_pieces(self: *Board, bb: BB) void {
-        self.util[@intFromEnum(UtilBB.ALL)] ^= bb;
-    }
+    // pub fn toggle_all_pieces(self: *Board, bb: BB) void {
+    //     self.util[@intFromEnum(UtilBB.ALL)] ^= bb;
+    // }
 
-    pub fn get_piece(self: *const Board, sq: usize) Piece {
+    pub fn _get_piece(self: *const Board, sq: usize) Piece {
         const bb = square(sq);
         for (0..self.pieces.len) |i| {
             if (self.pieces[i] & bb > 0) {
@@ -182,7 +197,22 @@ pub const Board = struct {
         return Piece.NONE;
     }
 
-    // pub fn _get_piece(self: *const Board, sq: usize) Piece {}
+    pub fn get_piece(self: *const Board, sq: usize) Piece {
+        const bb = square(sq);
+        const w_idxs = @Vector(6, u64){ 0, 1, 2, 3, 4, 5 };
+        const b_idxs = @Vector(6, u64){ 6, 7, 8, 9, 10, 11 };
+
+        const sqs: @Vector(6, BB) = @splat(bb);
+        const empty: @Vector(6, BB) = @splat(0);
+
+        const w_contains: @Vector(6, bool) = (self.white_vec & sqs) > empty;
+        const w_idx = @reduce(.Or, @select(BB, w_contains, w_idxs, empty));
+
+        const b_contains: @Vector(6, bool) = (self.black_vec & sqs) > empty;
+        const b_idx = @reduce(.Or, @select(BB, b_contains, b_idxs, empty));
+
+        return @enumFromInt(w_idx | b_idx);
+    }
 
     pub fn can_kingside(self: *const Board) bool {
         const shift: u3 = (2 - 2 * @as(u3, @intCast(@intFromEnum(self.ctm))));
@@ -256,15 +286,15 @@ pub const Board = struct {
     fn apply_cap(self: *Board, to: usize, xpiece: Piece) void {
         const to_sq = square(to);
         self.toggle_piece(xpiece, Colour.WHITE, to_sq);
-        self.toggle_colour_pieces(self.ctm.opp(), to_sq);
-        self.toggle_all_pieces(to_sq);
+        // self.toggle_colour_pieces(self.ctm.opp(), to_sq);
+        // self.toggle_all_pieces(to_sq);
     }
 
     fn apply_castle(self: *Board, c: Colour, from: usize, to: usize) void {
         const from_to: BB = square(from) | square(to);
         self.toggle_piece(Piece.ROOK, c, from_to);
-        self.toggle_colour_pieces(c, from_to);
-        self.toggle_all_pieces(from_to);
+        // self.toggle_colour_pieces(c, from_to);
+        // self.toggle_all_pieces(from_to);
     }
 
     fn apply_promo(self: *Board, xpiece: Piece, to: usize) void {
@@ -280,10 +310,10 @@ pub const Board = struct {
 
         // toggle captured piece
         self.toggle_piece(xpiece, Colour.WHITE, to_sq);
-        self.toggle_colour_pieces(self.ctm.opp(), to_sq);
+        // self.toggle_colour_pieces(self.ctm.opp(), to_sq);
 
         // retoggle piece (as its been replaces by the capturer)
-        self.toggle_all_pieces(to_sq);
+        // self.toggle_all_pieces(to_sq);
 
         // toggle pawn off
         self.toggle_piece(Piece.PAWN, self.ctm, to_sq);
@@ -299,8 +329,8 @@ pub const Board = struct {
         const ep_sq = square(ep);
         // toggle capture pawn off
         self.toggle_piece(Piece.PAWN, self.ctm.opp(), ep_sq);
-        self.toggle_colour_pieces(self.ctm.opp(), ep_sq);
-        self.toggle_all_pieces(ep_sq);
+        // self.toggle_colour_pieces(self.ctm.opp(), ep_sq);
+        // self.toggle_all_pieces(ep_sq);
 
         self.halfmove = 0;
     }
@@ -330,8 +360,8 @@ pub const Board = struct {
         const from_to: BB = square(from) | square(to);
 
         dest.toggle_piece(piece, Colour.WHITE, from_to);
-        dest.toggle_colour_pieces(dest.ctm, from_to);
-        dest.toggle_all_pieces(from_to);
+        // dest.toggle_colour_pieces(dest.ctm, from_to);
+        // dest.toggle_all_pieces(from_to);
 
         dest.set_castle_state(piece, from, to);
 
@@ -340,23 +370,26 @@ pub const Board = struct {
 
         dest.apply_move(to, piece, xpiece, m.mt);
 
+        dest.white_vec = dest.pieces[0..6].*;
+        dest.black_vec = dest.pieces[0..6].*;
+
         dest.ctm = self.ctm.opp();
     }
 
     pub fn copy_unmake(self: *const Board, dest: *Board, m: Move) void {
         dest.ctm = self.ctm;
-        dest.halfmove = self.halfmove;
-        dest.ep = self.ep;
         dest.castling = self.castling;
+        dest.ep = self.ep;
+        dest.halfmove = self.halfmove;
 
         dest.pieces[m.piece] = self.pieces[m.piece];
-        dest.util[@intFromEnum(self.ctm)] = self.util[@intFromEnum(self.ctm)];
-        dest.util[2] = self.util[2];
+        // dest.util[@intFromEnum(self.ctm)] = self.util[@intFromEnum(self.ctm)];
+        // dest.util[2] = self.util[2];
 
         switch (m.mt) {
             MoveType.CAP => {
                 dest.pieces[m.xpiece] = self.pieces[m.xpiece];
-                dest.util[@intFromEnum(self.ctm.opp())] = self.util[@intFromEnum(self.ctm.opp())];
+                // dest.util[@intFromEnum(self.ctm.opp())] = self.util[@intFromEnum(self.ctm.opp())];
             },
             MoveType.WKINGSIDE, MoveType.WQUEENSIDE => {
                 dest.pieces[@intFromEnum(Piece.ROOK)] = self.pieces[@intFromEnum(Piece.ROOK)];
@@ -371,7 +404,7 @@ pub const Board = struct {
                 const promo_p: usize = (@intFromEnum(m.mt) - 7) * 2;
                 dest.pieces[promo_p] = self.pieces[promo_p];
                 dest.pieces[m.xpiece] = self.pieces[m.xpiece];
-                dest.util[@intFromEnum(self.ctm.opp())] = self.util[@intFromEnum(self.ctm.opp())];
+                // dest.util[@intFromEnum(self.ctm.opp())] = self.util[@intFromEnum(self.ctm.opp())];
             },
             else => {},
         }
@@ -387,34 +420,39 @@ pub const Board = struct {
 };
 
 pub fn default_board() Board {
-    const board = Board{
+    var board = Board{
         .pieces = .{
             0x000000000000FF00, // wp 0
-            0x00FF000000000000, // bp 1
             0x0000000000000042, // wn 2
-            0x4200000000000000, // bn 3
             0x0000000000000081, // wr 4
-            0x8100000000000000, // br 5
             0x0000000000000024, // wb 6
-            0x2400000000000000, // bb 7
             0x0000000000000008, // wq 8
-            0x0800000000000000, // bq 9
             0x0000000000000010, // wk 10
+            0x00FF000000000000, // bp 1
+            0x4200000000000000, // bn 3
+            0x8100000000000000, // br 5
+            0x2400000000000000, // bb 7
+            0x0800000000000000, // bq 9
             0x1000000000000000, // bk 11
         },
-        .util = .{
-            0x000000000000FFFF, // white
-            0xFFFF000000000000, // black
-            0xFFFF00000000FFFF, // all
-        },
+        .white_vec = undefined,
+        .black_vec = undefined,
+        // .util = .{
+        //     0x000000000000FFFF, // white
+        //     0xFFFF000000000000, // black
+        //     // 0xFFFF00000000FFFF, // all
+        // },
         .ctm = Colour.WHITE,
         .castling = 0xFF,
         .halfmove = 0,
         .ep = 64,
-        .hash = undefined,
-        .mg_val = undefined,
-        .eg_val = undefined,
+        // .hash = undefined,
+        // .mg_val = undefined,
+        // .eg_val = undefined,
     };
+
+    board.white_vec = board.pieces[0..6].*;
+    board.black_vec = board.pieces[6..12].*;
 
     // TODO hash and eval
 
@@ -422,6 +460,7 @@ pub fn default_board() Board {
 }
 
 // assums pieces and util have been zeroed
+// TODO util, vec
 fn parse_pieces(pieces_str: []const u8, pieces: []BB, util_bb: []BB) !void {
     var it = std.mem.splitScalar(u8, pieces_str, '/');
 
@@ -514,7 +553,10 @@ pub fn board_from_fen(fen: []const u8) !Board {
     var it = std.mem.splitScalar(u8, std.mem.trim(u8, fen, " \n"), ' ');
 
     const pieces_str = it.next() orelse return error.InvalidFenNoPieces;
-    try parse_pieces(pieces_str, &b.pieces, &b.util);
+
+    // TODO
+    var dummy_util: [3]BB = undefined;
+    try parse_pieces(pieces_str, &b.pieces, &dummy_util);
 
     const ctm_str = it.next() orelse return error.InvalidFenNoCtm;
     b.ctm = try parse_ctm(ctm_str);

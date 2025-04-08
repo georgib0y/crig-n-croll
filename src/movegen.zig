@@ -59,7 +59,7 @@ pub const MoveType = enum(u8) {
     }
 };
 
-pub const Move = packed struct {
+pub const Move = packed struct(u32) {
     from: u6,
     to: u6,
     piece: u6,
@@ -451,24 +451,32 @@ fn gen_all_moves(ml: *MoveList, b: *const Board) void {
     king_castle(ml, b);
 }
 
-fn king_safe_target(b: *Board, king_sq: usize) BB {
+fn king_safe_target(b: *const Board, king_sq: usize) BB {
     // TODO is this the best way?
-    var internal_b = b;
     var king_moves = king_move(king_sq);
-    // remove the king while checking to find moving "away" from sliding pieces
-    internal_b.toggle_all_pieces(internal_b.piece_bb(Piece.KING, internal_b.ctm));
+    const not_king_bb = ~square(king_sq);
+    const attackers = b.ctm.opp();
 
     var safe: BB = 0;
     while (king_moves > 0) : (king_moves &= king_moves - 1) {
-        const to: BB = @ctz(king_moves);
+        const to: usize = @ctz(king_moves);
+        var atts: BB = 0;
 
-        if (internal_b.attackers_of_sq(to, internal_b.ctm.opp()) == 0) {
+        atts |= pawn_att(to, attackers.opp()) & b.piece_bb(Piece.PAWN, attackers);
+        atts |= knight_move(to) & b.piece_bb(Piece.KNIGHT, attackers);
+        atts |= king_move(to) & b.piece_bb(Piece.KING, attackers);
+
+        const rq: BB = b.piece_bb(Piece.ROOK, attackers) | b.piece_bb(Piece.QUEEN, attackers);
+        atts |= lookup_rook(b.all_bb() & not_king_bb, to) & rq;
+
+        const bq: BB = b.piece_bb(Piece.BISHOP, attackers) | b.piece_bb(Piece.QUEEN, attackers);
+        atts |= lookup_bishop(b.all_bb() & not_king_bb, to) & bq;
+
+        if (atts == 0) {
             safe |= square(to);
         }
     }
 
-    // restore the king
-    internal_b.toggle_all_pieces(internal_b.piece_bb(Piece.KING, internal_b.ctm));
     return safe;
 }
 
@@ -516,7 +524,7 @@ fn attacker_ray(b: *const Board, king_sq: usize, att_sq: usize) BB {
     }
 }
 
-fn gen_check_moves(ml: *MoveList, b: *Board) void {
+fn gen_check_moves(ml: *MoveList, b: *const Board) void {
     const king_sq: usize = @ctz(b.piece_bb(Piece.KING, b.ctm));
 
     const attackers = b.attackers_of_sq(king_sq, b.ctm.opp());
@@ -564,7 +572,7 @@ fn gen_check_moves(ml: *MoveList, b: *Board) void {
     if (b.ctm == Colour.WHITE) wpawn_quiet(b, ml, pinned, att_ray) else bpawn_quiet(b, ml, pinned, att_ray);
 }
 
-pub fn gen_moves(ml: *MoveList, b: *Board, checked: bool) void {
+pub fn gen_moves(ml: *MoveList, b: *const Board, checked: bool) void {
     if (checked) gen_check_moves(ml, b) else gen_all_moves(ml, b);
 }
 

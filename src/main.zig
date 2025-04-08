@@ -10,7 +10,7 @@ const log = std.log;
 pub const std_options = .{ .log_level = std.log.Level.debug };
 
 pub fn main() !void {
-    const depth: usize = 6;
+    const depth: usize = 2;
     var b = board.default_board();
 
     var timer = try std.time.Timer.start();
@@ -21,7 +21,12 @@ pub fn main() !void {
     std.debug.print("depth: {d}\tmovecount: {d}\ttook {d}ms", .{ depth, mc, dur / std.time.ns_per_ms });
 }
 
-fn perft(b: *Board, depth: usize) usize {
+fn perft(b: *const Board, depth: usize) usize {
+    // b.log(log.debug);
+    // util.log_bb(b.col_bb(board.Colour.WHITE), log.debug);
+    // util.log_bb(b.col_bb(board.Colour.BLACK), log.debug);
+    // util.log_bb(b.all_bb(), log.debug);
+
     if (depth == 0) {
         return 1;
     }
@@ -33,16 +38,19 @@ fn perft(b: *Board, depth: usize) usize {
     var mc: usize = 0;
     var next: Board = b.*;
     while (ml.next()) |m| {
+        // m.log(log.debug);
+        next = b.*;
         b.copy_make(&next, m);
 
         if (!movegen.is_legal_move(&next, m, checked)) {
-            b.copy_unmake(&next, m);
+
+            // b.copy_unmake(&next, m);
             continue;
         }
 
         mc += perft(&next, depth - 1);
 
-        b.copy_unmake(&next, m);
+        // b.copy_unmake(&next, m);
     }
 
     return mc;
