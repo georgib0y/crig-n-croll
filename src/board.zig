@@ -36,7 +36,7 @@ pub const Rank = enum(BB) {
     R8 = 0xFF00000000000000,
 };
 
-pub const Colour = enum(u8) {
+pub const Colour = enum(u4) {
     WHITE = 0,
     BLACK = 1,
 
@@ -45,7 +45,7 @@ pub const Colour = enum(u8) {
     }
 };
 
-pub const Piece = enum(u8) {
+pub const Piece = enum(u4) {
     PAWN = 0,
     KNIGHT = 1,
     ROOK = 2,
@@ -133,7 +133,6 @@ pub fn char_from_piece(p: Piece) u8 {
 pub const UtilBB = enum { ALL_W, ALL_B, ALL };
 
 pub const Board = struct {
-    pieces: [12]BB,
     white_vec: @Vector(6, BB),
     black_vec: @Vector(6, BB),
 
@@ -146,36 +145,40 @@ pub const Board = struct {
     // mg_val: i32,
     // eg_val: i32,
 
-    pub inline fn piece_bb(self: *const Board, p: Piece, c: Colour) BB {
-        const pidx: usize = @intFromEnum(p);
-        const cidx: usize = @intFromEnum(c) * 6;
-        const idx: usize = pidx + cidx;
-        return self.pieces[idx];
+    pub fn pieces(self: *const Board, buf: []BB) void {
+        std.debug.assert(buf.len >= 12);
+        const white: [6]BB = self.white_vec;
+        const black: [6]BB = self.black_vec;
+        for (0..6) |i| {
+            buf[i] = white[i];
+            buf[i + 6] = black[i];
+        }
+    }
+
+    pub inline fn piece_bb(self: *const Board, p: Piece) BB {
+        const pidx = @intFromEnum(p);
+        if (pidx < 6) {
+            return self.white_vec[pidx];
+        } else {
+            return self.black_vec[pidx - 6];
+        }
     }
 
     pub fn col_bb(self: *const Board, c: Colour) BB {
         return @reduce(.Or, if (c == Colour.WHITE) self.white_vec else self.black_vec);
-
-        // if (c == Colour.WHITE) {
-        //     const piece_vec: @Vector(6, BB) = self.pieces[0..6].*;
-        //     return @reduce(.Or, piece_vec);
-        // } else {
-        //     const piece_vec: @Vector(6, BB) = self.pieces[6..12].*;
-        //     return @reduce(.Or, piece_vec);
-        // }
-
-        // return self.util[@intFromEnum(c)];
     }
 
     pub inline fn all_bb(self: *const Board) BB {
         return @reduce(.Or, self.white_vec | self.black_vec);
-
-        // return self.util[0] | self.util[1];
     }
 
-    pub fn toggle_piece(self: *Board, p: Piece, c: Colour, bb: BB) void {
-        const idx = @intFromEnum(p) + @intFromEnum(c);
-        self.pieces[idx] ^= bb;
+    pub fn toggle_piece(self: *Board, p: Piece, bb: BB) void {
+        const pidx = @intFromEnum(p);
+        if (pidx < 6) {
+            self.white_vec[pidx] ^= bb;
+        } else {
+            self.black_vec[pidx - 6] ^= bb;
+        }
     }
 
     // pub fn toggle_colour_pieces(self: *Board, c: Colour, bb: BB) void {
@@ -224,28 +227,46 @@ pub const Board = struct {
         return (self.castling >> shift) & 1 > 0;
     }
 
-    pub fn attackers_of_sq(self: *const Board, sq: usize, attackers: Colour) BB {
+    pub fn _attackers_of_sq(self: *const Board, sq: usize, attackers: Colour) BB {
         @prefetch(&movegen.rook_magics[sq], .{});
         @prefetch(&movegen.bishop_magics[sq], .{});
 
         var atts: BB = 0;
+
         // add pawn attacks, need to get the inverted pawn attacsk for the attacking
         // colour as we are working backwards from sq
-        atts |= movegen.pawn_att(sq, attackers.opp()) & self.piece_bb(Piece.PAWN, attackers);
-        atts |= movegen.knight_move(sq) & self.piece_bb(Piece.KNIGHT, attackers);
-        atts |= movegen.king_move(sq) & self.piece_bb(Piece.KING, attackers);
+        atts |= movegen.pawn_att(sq, attackers.opp()) & self.piece_bb(Piece.PAWN.with_ctm(attackers));
+        atts |= movegen.knight_move(sq) & self.piece_bb(Piece.KNIGHT.with_ctm(attackers));
+        atts |= movegen.king_move(sq) & self.piece_bb(Piece.KING.with_ctm(attackers));
 
-        const rq: BB = self.piece_bb(Piece.ROOK, attackers) | self.piece_bb(Piece.QUEEN, attackers);
+        const rq: BB = self.piece_bb(Piece.ROOK.with_ctm(attackers)) | self.piece_bb(Piece.QUEEN.with_ctm(attackers));
         atts |= movegen.lookup_rook(self.all_bb(), sq) & rq;
 
-        const bq: BB = self.piece_bb(Piece.BISHOP, attackers) | self.piece_bb(Piece.QUEEN, attackers);
+        const bq: BB = self.piece_bb(Piece.BISHOP.with_ctm(attackers)) | self.piece_bb(Piece.QUEEN.with_ctm(attackers));
         atts |= movegen.lookup_bishop(self.all_bb(), sq) & bq;
 
         return atts;
     }
 
+    pub fn attackers_of_sq(self: *const Board, sq: usize, attackers: Colour) BB {
+        const rook_moves = movegen.lookup_rook(self.all_bb(), sq);
+        const bishop_moves = movegen.lookup_bishop(self.all_bb(), sq);
+        const queen_moves = rook_moves | bishop_moves;
+
+        const moves = @Vector(6, BB){
+            movegen.pawn_att(sq, attackers.opp()),
+            movegen.knight_move(sq),
+            rook_moves,
+            bishop_moves,
+            queen_moves,
+            movegen.king_move(sq),
+        };
+
+        return @reduce(.Or, moves & if (attackers == Colour.WHITE) self.white_vec else self.black_vec);
+    }
+
     pub fn is_in_check(self: *const Board) bool {
-        const king_sq: usize = @ctz(self.piece_bb(Piece.KING, self.ctm));
+        const king_sq: usize = @ctz(self.piece_bb(Piece.KING.with_ctm(self.ctm)));
         return self.attackers_of_sq(king_sq, self.ctm.opp()) > 0;
     }
 
@@ -272,35 +293,36 @@ pub const Board = struct {
     }
 
     fn apply_quiet(self: *Board, p: Piece) void {
-        switch (p) {
-            Piece.PAWN, Piece.PAWN_B => self.halfmove = 0,
-            else => return,
-        }
+        self.halfmove *= @intFromEnum(p) % 6;
+        // switch (p) {
+        //     Piece.PAWN, Piece.PAWN_B => self.halfmove = 0,
+        //     else => return,
+        // }
     }
 
     fn apply_double(self: *Board, to: usize) void {
-        const ep: usize = to - 8 + (@intFromEnum(self.ctm) * 16);
+        const ep: usize = to - 8 + (@as(usize, @intFromEnum(self.ctm)) * 16);
         self.ep = @intCast(ep);
     }
 
     fn apply_cap(self: *Board, to: usize, xpiece: Piece) void {
         const to_sq = square(to);
-        self.toggle_piece(xpiece, Colour.WHITE, to_sq);
+        self.toggle_piece(xpiece, to_sq);
         // self.toggle_colour_pieces(self.ctm.opp(), to_sq);
         // self.toggle_all_pieces(to_sq);
     }
 
     fn apply_castle(self: *Board, c: Colour, from: usize, to: usize) void {
         const from_to: BB = square(from) | square(to);
-        self.toggle_piece(Piece.ROOK, c, from_to);
+        self.toggle_piece(Piece.ROOK.with_ctm(c), from_to);
         // self.toggle_colour_pieces(c, from_to);
         // self.toggle_all_pieces(from_to);
     }
 
     fn apply_promo(self: *Board, xpiece: Piece, to: usize) void {
         // toggle pawn off and toggle the promo on
-        self.toggle_piece(Piece.PAWN, self.ctm, square(to));
-        self.toggle_piece(xpiece, Colour.WHITE, square(to));
+        self.toggle_piece(Piece.PAWN.with_ctm(self.ctm), square(to));
+        self.toggle_piece(xpiece, square(to));
         self.halfmove = 0;
     }
 
@@ -309,26 +331,26 @@ pub const Board = struct {
         const promo_p: Piece = @enumFromInt((@intFromEnum(mt) - 7) * 2);
 
         // toggle captured piece
-        self.toggle_piece(xpiece, Colour.WHITE, to_sq);
+        self.toggle_piece(xpiece, to_sq);
         // self.toggle_colour_pieces(self.ctm.opp(), to_sq);
 
         // retoggle piece (as its been replaces by the capturer)
         // self.toggle_all_pieces(to_sq);
 
         // toggle pawn off
-        self.toggle_piece(Piece.PAWN, self.ctm, to_sq);
+        self.toggle_piece(Piece.PAWN.with_ctm(self.ctm), to_sq);
 
         // toggle promo on
-        self.toggle_piece(promo_p, self.ctm, to_sq);
+        self.toggle_piece(promo_p.with_ctm(self.ctm), to_sq);
 
         self.halfmove = 0;
     }
 
     fn apply_ep(self: *Board, to: usize) void {
-        const ep: usize = to - 8 + (@intFromEnum(self.ctm) * 16);
+        const ep: usize = to - 8 + (@as(usize, @intFromEnum(self.ctm)) * 16);
         const ep_sq = square(ep);
         // toggle capture pawn off
-        self.toggle_piece(Piece.PAWN, self.ctm.opp(), ep_sq);
+        self.toggle_piece(Piece.PAWN.with_ctm(self.ctm.opp()), ep_sq);
         // self.toggle_colour_pieces(self.ctm.opp(), ep_sq);
         // self.toggle_all_pieces(ep_sq);
 
@@ -354,61 +376,52 @@ pub const Board = struct {
     pub fn copy_make(self: *const Board, dest: *Board, m: Move) void {
         const from: usize = @intCast(m.from);
         const to: usize = @intCast(m.to);
-        const piece: Piece = @enumFromInt(m.piece);
-        const xpiece: Piece = @enumFromInt(m.xpiece);
 
         const from_to: BB = square(from) | square(to);
 
-        dest.toggle_piece(piece, Colour.WHITE, from_to);
-        // dest.toggle_colour_pieces(dest.ctm, from_to);
-        // dest.toggle_all_pieces(from_to);
-
-        dest.set_castle_state(piece, from, to);
-
+        dest.toggle_piece(m.piece, from_to);
+        dest.set_castle_state(m.piece, from, to);
         dest.ep = 64;
         dest.halfmove += 1;
-
-        dest.apply_move(to, piece, xpiece, m.mt);
-
-        dest.white_vec = dest.pieces[0..6].*;
-        dest.black_vec = dest.pieces[0..6].*;
-
+        dest.apply_move(to, m.piece, m.xpiece, m.mt);
         dest.ctm = self.ctm.opp();
     }
 
-    pub fn copy_unmake(self: *const Board, dest: *Board, m: Move) void {
-        dest.ctm = self.ctm;
-        dest.castling = self.castling;
-        dest.ep = self.ep;
-        dest.halfmove = self.halfmove;
+    // pub fn copy_unmake(self: *const Board, dest: *Board, m: Move) void {
+    //     _
+    //     dest.ctm = self.ctm;
+    //     dest.castling = self.castling;
+    //     dest.ep = self.ep;
+    //     dest.halfmove = self.halfmove;
 
-        dest.pieces[m.piece] = self.pieces[m.piece];
-        // dest.util[@intFromEnum(self.ctm)] = self.util[@intFromEnum(self.ctm)];
-        // dest.util[2] = self.util[2];
+    //     // TODO
+    //     dest.pieces[m.piece] = self.pieces[m.piece];
+    //     dest.util[@intFromEnum(self.ctm)] = self.util[@intFromEnum(self.ctm)];
+    //     dest.util[2] = self.util[2];
 
-        switch (m.mt) {
-            MoveType.CAP => {
-                dest.pieces[m.xpiece] = self.pieces[m.xpiece];
-                // dest.util[@intFromEnum(self.ctm.opp())] = self.util[@intFromEnum(self.ctm.opp())];
-            },
-            MoveType.WKINGSIDE, MoveType.WQUEENSIDE => {
-                dest.pieces[@intFromEnum(Piece.ROOK)] = self.pieces[@intFromEnum(Piece.ROOK)];
-            },
-            MoveType.BKINGSIDE, MoveType.BQUEENSIDE => {
-                dest.pieces[@intFromEnum(Piece.ROOK_B)] = self.pieces[@intFromEnum(Piece.ROOK_B)];
-            },
-            MoveType.PROMO => {
-                dest.pieces[m.xpiece] = self.pieces[m.xpiece];
-            },
-            MoveType.NPROMOCAP, MoveType.RPROMOCAP, MoveType.BPROMOCAP, MoveType.QPROMOCAP => {
-                const promo_p: usize = (@intFromEnum(m.mt) - 7) * 2;
-                dest.pieces[promo_p] = self.pieces[promo_p];
-                dest.pieces[m.xpiece] = self.pieces[m.xpiece];
-                // dest.util[@intFromEnum(self.ctm.opp())] = self.util[@intFromEnum(self.ctm.opp())];
-            },
-            else => {},
-        }
-    }
+    //     switch (m.mt) {
+    //         MoveType.CAP => {
+    //             dest.pieces[m.xpiece] = self.pieces[m.xpiece];
+    //             // dest.util[@intFromEnum(self.ctm.opp())] = self.util[@intFromEnum(self.ctm.opp())];
+    //         },
+    //         MoveType.WKINGSIDE, MoveType.WQUEENSIDE => {
+    //             dest.pieces[@intFromEnum(Piece.ROOK)] = self.pieces[@intFromEnum(Piece.ROOK)];
+    //         },
+    //         MoveType.BKINGSIDE, MoveType.BQUEENSIDE => {
+    //             dest.pieces[@intFromEnum(Piece.ROOK_B)] = self.pieces[@intFromEnum(Piece.ROOK_B)];
+    //         },
+    //         MoveType.PROMO => {
+    //             dest.pieces[m.xpiece] = self.pieces[m.xpiece];
+    //         },
+    //         MoveType.NPROMOCAP, MoveType.RPROMOCAP, MoveType.BPROMOCAP, MoveType.QPROMOCAP => {
+    //             const promo_p: usize = (@intFromEnum(m.mt) - 7) * 2;
+    //             dest.pieces[promo_p] = self.pieces[promo_p];
+    //             dest.pieces[m.xpiece] = self.pieces[m.xpiece];
+    //             // dest.util[@intFromEnum(self.ctm.opp())] = self.util[@intFromEnum(self.ctm.opp())];
+    //         },
+    //         else => {},
+    //     }
+    // }
 
     pub fn log(self: Board, comptime log_fn: fn (comptime []const u8, anytype) void) void {
         util.log_board(self, log_fn);
@@ -420,14 +433,16 @@ pub const Board = struct {
 };
 
 pub fn default_board() Board {
-    var board = Board{
-        .pieces = .{
+    const board = Board{
+        .white_vec = @Vector(6, BB){
             0x000000000000FF00, // wp 0
             0x0000000000000042, // wn 2
             0x0000000000000081, // wr 4
             0x0000000000000024, // wb 6
             0x0000000000000008, // wq 8
             0x0000000000000010, // wk 10
+        },
+        .black_vec = @Vector(6, BB){
             0x00FF000000000000, // bp 1
             0x4200000000000000, // bn 3
             0x8100000000000000, // br 5
@@ -435,13 +450,6 @@ pub fn default_board() Board {
             0x0800000000000000, // bq 9
             0x1000000000000000, // bk 11
         },
-        .white_vec = undefined,
-        .black_vec = undefined,
-        // .util = .{
-        //     0x000000000000FFFF, // white
-        //     0xFFFF000000000000, // black
-        //     // 0xFFFF00000000FFFF, // all
-        // },
         .ctm = Colour.WHITE,
         .castling = 0xFF,
         .halfmove = 0,
@@ -450,9 +458,6 @@ pub fn default_board() Board {
         // .mg_val = undefined,
         // .eg_val = undefined,
     };
-
-    board.white_vec = board.pieces[0..6].*;
-    board.black_vec = board.pieces[6..12].*;
 
     // TODO hash and eval
 
@@ -556,7 +561,8 @@ pub fn board_from_fen(fen: []const u8) !Board {
 
     // TODO
     var dummy_util: [3]BB = undefined;
-    try parse_pieces(pieces_str, &b.pieces, &dummy_util);
+    var dummy_pieces: [12]BB = undefined;
+    try parse_pieces(pieces_str, &dummy_pieces, &dummy_util);
 
     const ctm_str = it.next() orelse return error.InvalidFenNoCtm;
     b.ctm = try parse_ctm(ctm_str);

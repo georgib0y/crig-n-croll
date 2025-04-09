@@ -60,10 +60,10 @@ pub const MoveType = enum(u8) {
 };
 
 pub const Move = packed struct(u32) {
-    from: u6,
-    to: u6,
-    piece: u6,
-    xpiece: u6,
+    from: u8,
+    to: u8,
+    piece: Piece,
+    xpiece: Piece,
     mt: MoveType,
 
     pub fn log(self: Move, comptime log_fn: fn (comptime []const u8, anytype) void) void {
@@ -82,7 +82,7 @@ pub const Move = packed struct(u32) {
     }
 
     fn new(from: usize, to: usize, piece: Piece, xpiece: Piece, mt: MoveType) Move {
-        return Move{ .from = @truncate(from), .to = @truncate(to), .piece = @truncate(@intFromEnum(piece)), .xpiece = @truncate(@intFromEnum(xpiece)), .mt = mt };
+        return Move{ .from = @truncate(from), .to = @truncate(to), .piece = piece, .xpiece = xpiece, .mt = mt };
     }
 };
 
@@ -220,7 +220,7 @@ pub fn new_move_list(depth: usize) MoveList {
 }
 
 fn wpawn_quiet(b: *const Board, ml: *MoveList, pin_sqs: BB, target_sqs: BB) void {
-    const pawns = b.piece_bb(Piece.PAWN, Colour.WHITE) & ~pin_sqs;
+    const pawns = b.piece_bb(Piece.PAWN.with_ctm(Colour.WHITE)) & ~pin_sqs;
     const occ = b.all_bb() | ~target_sqs;
     const quiet = pawns & ~(occ >> 8);
 
@@ -239,7 +239,7 @@ fn wpawn_quiet(b: *const Board, ml: *MoveList, pin_sqs: BB, target_sqs: BB) void
 }
 
 fn wpawn_attack(b: *const Board, ml: *MoveList, pin_sqs: BB, target_sqs: BB) void {
-    const pawns = b.piece_bb(Piece.PAWN, Colour.WHITE) & ~pin_sqs;
+    const pawns = b.piece_bb(Piece.PAWN.with_ctm(Colour.WHITE)) & ~pin_sqs;
     const opp = b.col_bb(Colour.BLACK) & target_sqs;
 
     const att_left = (pawns & ~@intFromEnum(File.FA)) & (opp >> 7);
@@ -270,7 +270,7 @@ fn wpawn_ep(b: *const Board, ml: *MoveList, pin_sqs: BB, target_sqs: BB) void {
         return;
     }
 
-    const pawns = b.piece_bb(Piece.PAWN, Colour.WHITE) & ~pin_sqs;
+    const pawns = b.piece_bb(Piece.PAWN.with_ctm(Colour.WHITE)) & ~pin_sqs;
     const opp = b.col_bb(Colour.BLACK) & target_sqs;
 
     // back right
@@ -284,7 +284,7 @@ fn wpawn_ep(b: *const Board, ml: *MoveList, pin_sqs: BB, target_sqs: BB) void {
 }
 
 fn bpawn_quiet(b: *const Board, ml: *MoveList, pin_sqs: BB, target_sqs: BB) void {
-    const pawns = b.piece_bb(Piece.PAWN, Colour.BLACK) & ~pin_sqs;
+    const pawns = b.piece_bb(Piece.PAWN.with_ctm(Colour.BLACK)) & ~pin_sqs;
     const occ = b.all_bb() | ~target_sqs;
     const quiet = pawns & ~(occ << 8);
 
@@ -303,7 +303,7 @@ fn bpawn_quiet(b: *const Board, ml: *MoveList, pin_sqs: BB, target_sqs: BB) void
 }
 
 fn bpawn_attack(b: *const Board, ml: *MoveList, pin_sqs: BB, target_sqs: BB) void {
-    const pawns = b.piece_bb(Piece.PAWN, Colour.BLACK) & ~pin_sqs;
+    const pawns = b.piece_bb(Piece.PAWN.with_ctm(Colour.BLACK)) & ~pin_sqs;
     const opp = b.col_bb(Colour.WHITE) & target_sqs;
 
     const att_left = (pawns & ~@intFromEnum(File.FA)) & (opp << 9);
@@ -334,7 +334,7 @@ fn bpawn_ep(b: *const Board, ml: *MoveList, pin_sqs: BB, target_sqs: BB) void {
         return;
     }
 
-    const pawns = b.piece_bb(Piece.PAWN, Colour.BLACK) & ~pin_sqs;
+    const pawns = b.piece_bb(Piece.PAWN.with_ctm(Colour.BLACK)) & ~pin_sqs;
     const opp = b.col_bb(Colour.WHITE) & target_sqs;
 
     // down left
@@ -349,7 +349,7 @@ fn bpawn_ep(b: *const Board, ml: *MoveList, pin_sqs: BB, target_sqs: BB) void {
 }
 
 fn piece_quiet(ml: *MoveList, b: *const Board, comptime piece: Piece, comptime move_fn: fn (occ: BB, from: usize) BB, pin_sqs: BB, target_sqs: BB) void {
-    var pieces = b.piece_bb(piece, b.ctm) & ~pin_sqs;
+    var pieces = b.piece_bb(piece.with_ctm(b.ctm)) & ~pin_sqs;
 
     while (pieces > 0) : (pieces &= pieces - 1) {
         const from: usize = @ctz(pieces);
@@ -363,7 +363,7 @@ fn piece_quiet(ml: *MoveList, b: *const Board, comptime piece: Piece, comptime m
 }
 
 fn piece_attack(ml: *MoveList, b: *const Board, comptime piece: Piece, comptime move_fn: fn (occ: BB, from: usize) BB, pin_sqs: BB, target_sqs: BB) void {
-    var pieces = b.piece_bb(piece, b.ctm) & ~pin_sqs;
+    var pieces = b.piece_bb(piece.with_ctm(b.ctm)) & ~pin_sqs;
     const opp = b.col_bb(b.ctm.opp()) & target_sqs;
 
     while (pieces > 0) : (pieces &= pieces - 1) {
@@ -404,14 +404,14 @@ fn queen_move_wrapper(occ: BB, from: usize) BB {
 }
 
 pub inline fn pawn_att(sq: usize, ctm: Colour) BB {
-    return pawn_attack_table[sq + (64 * @intFromEnum(ctm))];
+    return pawn_attack_table[sq + (64 * @as(usize, @intFromEnum(ctm)))];
 }
 
 fn king_castle(ml: *MoveList, b: *const Board) void {
-    const from: usize = @ctz(b.piece_bb(Piece.KING, b.ctm));
+    const from: usize = @ctz(b.piece_bb(Piece.KING.with_ctm(b.ctm)));
 
     // if castle rights allow and no pieces are between king and rook
-    const shift: u6 = @intCast(@intFromEnum(b.ctm) * 56);
+    const shift: u6 = @intCast(@as(u6, @intFromEnum(b.ctm)) * 56);
     const kingside_mask: BB = @as(BB, 0x60) << shift;
     if (b.can_kingside() and (b.all_bb() & kingside_mask) == 0) {
         const mt = if (b.ctm == Colour.WHITE) MoveType.WKINGSIDE else MoveType.BKINGSIDE;
@@ -462,14 +462,14 @@ fn king_safe_target(b: *const Board, king_sq: usize) BB {
         const to: usize = @ctz(king_moves);
         var atts: BB = 0;
 
-        atts |= pawn_att(to, attackers.opp()) & b.piece_bb(Piece.PAWN, attackers);
-        atts |= knight_move(to) & b.piece_bb(Piece.KNIGHT, attackers);
-        atts |= king_move(to) & b.piece_bb(Piece.KING, attackers);
+        atts |= pawn_att(to, attackers.opp()) & b.piece_bb(Piece.PAWN.with_ctm(attackers));
+        atts |= knight_move(to) & b.piece_bb(Piece.KNIGHT.with_ctm(attackers));
+        atts |= king_move(to) & b.piece_bb(Piece.KING.with_ctm(attackers));
 
-        const rq: BB = b.piece_bb(Piece.ROOK, attackers) | b.piece_bb(Piece.QUEEN, attackers);
+        const rq: BB = b.piece_bb(Piece.ROOK.with_ctm(attackers)) | b.piece_bb(Piece.QUEEN.with_ctm(attackers));
         atts |= lookup_rook(b.all_bb() & not_king_bb, to) & rq;
 
-        const bq: BB = b.piece_bb(Piece.BISHOP, attackers) | b.piece_bb(Piece.QUEEN, attackers);
+        const bq: BB = b.piece_bb(Piece.BISHOP.with_ctm(attackers)) | b.piece_bb(Piece.QUEEN.with_ctm(attackers));
         atts |= lookup_bishop(b.all_bb() & not_king_bb, to) & bq;
 
         if (atts == 0) {
@@ -487,7 +487,7 @@ fn pinned_sqs(b: *const Board, king_sq: usize) BB {
     const ctm_occ = b.col_bb(b.ctm);
     const opp = b.ctm.opp();
 
-    const rook_queens: BB = b.piece_bb(Piece.ROOK, opp) | b.piece_bb(Piece.QUEEN, opp);
+    const rook_queens: BB = b.piece_bb(Piece.ROOK.with_ctm(opp)) | b.piece_bb(Piece.QUEEN.with_ctm(opp));
     var rq_pinners: BB =
         lookup_rook_xray(all_occ, ctm_occ, king_sq) & rook_queens;
 
@@ -496,7 +496,7 @@ fn pinned_sqs(b: *const Board, king_sq: usize) BB {
         pinned |= lookup_rook(all_occ, from);
     }
 
-    const bishop_queens: BB = b.piece_bb(Piece.BISHOP, opp) | b.piece_bb(Piece.QUEEN, opp);
+    const bishop_queens: BB = b.piece_bb(Piece.BISHOP.with_ctm(opp)) | b.piece_bb(Piece.QUEEN.with_ctm(opp));
     var bq_pinners: BB = lookup_bishop_xray(all_occ, ctm_occ, king_sq) &
         bishop_queens;
 
@@ -525,7 +525,7 @@ fn attacker_ray(b: *const Board, king_sq: usize, att_sq: usize) BB {
 }
 
 fn gen_check_moves(ml: *MoveList, b: *const Board) void {
-    const king_sq: usize = @ctz(b.piece_bb(Piece.KING, b.ctm));
+    const king_sq: usize = @ctz(b.piece_bb(Piece.KING.with_ctm(b.ctm)));
 
     const attackers = b.attackers_of_sq(king_sq, b.ctm.opp());
     const safe_moves = king_safe_target(b, king_sq);
@@ -614,7 +614,7 @@ pub fn is_legal_move(b: *const Board, m: Move, checked: bool) bool {
     }
 
     // check if moved into check
-    const ksq: usize = @ctz(b.piece_bb(Piece.KING, b.ctm.opp()));
+    const ksq: usize = @ctz(b.piece_bb(Piece.KING.with_ctm(b.ctm.opp())));
 
     if ((square(m.to) | square(m.from)) & super_moves[ksq] > 0 and b.attackers_of_sq(ksq, b.ctm) > 0) {
         return false;

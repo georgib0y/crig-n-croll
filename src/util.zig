@@ -62,8 +62,7 @@ pub fn move_as_uci_str(m: Move, w: anytype) !void {
     try write_sq(w, @as(usize, m.to));
     switch (m.mt) {
         MoveType.PROMO => {
-            const xpiece = @as(Piece, @enumFromInt(m.xpiece));
-            const c = std.ascii.toLower(board.char_from_piece(xpiece));
+            const c = std.ascii.toLower(board.char_from_piece(m.xpiece));
             try std.fmt.format(w, "{c}", .{c});
         },
         MoveType.NPROMOCAP, MoveType.RPROMOCAP, MoveType.BPROMOCAP, MoveType.QPROMOCAP => |mt| {
@@ -119,7 +118,9 @@ pub fn display_board(b: Board, writer: anytype) !void {
             // like get_piece but wont stop printing if there are multiple pieces on the same sq
             const bb = board.square(sq);
             var printed = false;
-            inline for (0.., b.pieces) |p, pbb| {
+            var pieces: [12]BB = undefined;
+            b.pieces(&pieces);
+            inline for (0.., pieces) |p, pbb| {
                 if (pbb & bb > 0) {
                     try std.fmt.format(writer, "{c}", .{board.char_from_piece(@enumFromInt(p))});
                     printed = true;
