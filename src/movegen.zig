@@ -29,7 +29,7 @@ const PROMO_CAP_MTS = [4]MoveType{ MoveType.NPROMOCAP, MoveType.RPROMOCAP, MoveT
 const PROMO_PIECES_W = [4]Piece{ Piece.KNIGHT, Piece.ROOK, Piece.BISHOP, Piece.QUEEN };
 const PROMO_PIECES_B = [4]Piece{ Piece.KNIGHT_B, Piece.ROOK_B, Piece.BISHOP_B, Piece.QUEEN_B };
 
-pub const MoveType = enum(u8) {
+pub const MoveType = enum(u4) {
     QUIET,
     DOUBLE,
     CAP,
@@ -59,11 +59,13 @@ pub const MoveType = enum(u8) {
     }
 };
 
+// this arrangement seems to be the most performant
+// even if it is 28bytes - with padding to make it a u32 seems to be slower
 pub const Move = packed struct {
-    from: u6,
-    to: u6,
-    piece: u6,
-    xpiece: u6,
+    from: u8,
+    to: u8,
+    piece: Piece,
+    xpiece: Piece,
     mt: MoveType,
 
     pub fn log(self: Move, comptime log_fn: fn (comptime []const u8, anytype) void) void {
@@ -82,7 +84,7 @@ pub const Move = packed struct {
     }
 
     fn new(from: usize, to: usize, piece: Piece, xpiece: Piece, mt: MoveType) Move {
-        return Move{ .from = @truncate(from), .to = @truncate(to), .piece = @truncate(@intFromEnum(piece)), .xpiece = @truncate(@intFromEnum(xpiece)), .mt = mt };
+        return Move{ .from = @intCast(from), .to = @intCast(to), .piece = piece, .xpiece = xpiece, .mt = mt };
     }
 };
 

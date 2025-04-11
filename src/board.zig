@@ -8,7 +8,7 @@ const util = @import("util.zig");
 
 pub const BB = u64;
 
-const CastleState = u8;
+pub const CastleState = u8;
 
 pub fn square(idx: usize) BB {
     return @as(BB, 1) << @as(u6, @intCast(idx));
@@ -45,7 +45,7 @@ pub const Colour = enum(u8) {
     }
 };
 
-pub const Piece = enum(u8) {
+pub const Piece = enum(u4) {
     PAWN = 0,
     PAWN_B = 1,
     KNIGHT = 2,
@@ -195,9 +195,6 @@ pub const Board = struct {
     }
 
     pub fn attackers_of_sq(self: *const Board, sq: usize, attackers: Colour) BB {
-        @prefetch(&movegen.rook_magics[sq], .{});
-        @prefetch(&movegen.bishop_magics[sq], .{});
-
         var atts: BB = 0;
         // add pawn attacks, need to get the inverted pawn attacsk for the attacking
         // colour as we are working backwards from sq
@@ -325,8 +322,8 @@ pub const Board = struct {
 
         const from: usize = @intCast(m.from);
         const to: usize = @intCast(m.to);
-        const piece: Piece = @enumFromInt(m.piece);
-        const xpiece: Piece = @enumFromInt(m.xpiece);
+        const piece: Piece = m.piece;
+        const xpiece: Piece = m.xpiece;
 
         const from_to: BB = square(from) | square(to);
 

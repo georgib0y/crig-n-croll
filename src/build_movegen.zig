@@ -6,6 +6,18 @@ const square = board.square;
 const File = board.File;
 const Rank = board.Rank;
 
+// const RANDOM_SEED: u64 = 7252092290257123456;
+const RANDOM_SEED: u64 = 9379609607221297880;
+var rng = std.Random.DefaultPrng.init(RANDOM_SEED);
+
+var zobrist: [781]u64 = undefined;
+
+fn inti_zobrist() void {
+    for (0..zobrist.len) |i| {
+        zobrist[i] = rng.next();
+    }
+}
+
 // these are redeclared from magic.zig to avoid weird cycles
 const SquareMagic = struct { mask: BB, magic: u64 };
 const RSHIFT = 12; // !
@@ -105,8 +117,8 @@ pub fn init_super_moves() void {
     }
 }
 
-fn write_bb_array(w: anytype, a: []BB, name: []const u8) !void {
-    try std.fmt.format(w, "pub const {s}: [{d}]BB = .{{\n", .{ name, a.len });
+fn write_int_array(w: anytype, comptime T: type, a: []T, name: []const u8) !void {
+    try std.fmt.format(w, "pub const {s}: [{d}]{s} = .{{\n", .{ name, a.len, @typeName(T) });
     for (a) |bb| {
         try std.fmt.format(w, "\t0x{X},\n", .{bb});
     }
@@ -159,10 +171,12 @@ pub fn main() !void {
     try std.fmt.format(w, "const BB = u64;\n", .{});
     try std.fmt.format(w, "const SquareMagic = struct {{ mask: BB, magic: u64 }};\n", .{});
 
-    try write_bb_array(w, &pawn_attack_table, "pawn_attack_table");
-    try write_bb_array(w, &knight_move_table, "knight_move_table");
-    try write_bb_array(w, &king_move_table, "king_move_table");
-    try write_bb_array(w, &super_moves, "super_moves");
+    try write_int_array(w, u64, &zobrist, "zobrist");
+
+    try write_int_array(w, BB, &pawn_attack_table, "pawn_attack_table");
+    try write_int_array(w, BB, &knight_move_table, "knight_move_table");
+    try write_int_array(w, BB, &king_move_table, "king_move_table");
+    try write_int_array(w, BB, &super_moves, "super_moves");
 
     try write_sq_mag(w, &rook_magics, "rook_magics");
     try write_sq_mag(w, &bishop_magics, "bishop_magics");
@@ -175,12 +189,8 @@ pub fn main() !void {
 
 // the following is heavily inspired by https://www.chessprogramming.org/Looking_for_Magics
 
-// const RANDOM_SEED: u64 = 7252092290257123456;
-const RANDOM_SEED: u64 = 9379609607221297880;
-
 const MAGIC_ITERS: usize = 1000000000;
 
-var rng = std.Random.DefaultPrng.init(RANDOM_SEED);
 fn random_magic() u64 {
     return rng.next() & rng.next() & rng.next(); // fewer bits are better apparently
 }

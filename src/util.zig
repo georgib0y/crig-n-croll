@@ -62,7 +62,7 @@ pub fn move_as_uci_str(m: Move, w: anytype) !void {
     try write_sq(w, @as(usize, m.to));
     switch (m.mt) {
         MoveType.PROMO => {
-            const xpiece = @as(Piece, @enumFromInt(m.xpiece));
+            const xpiece = @as(Piece, m.xpiece);
             const c = std.ascii.toLower(board.char_from_piece(xpiece));
             try std.fmt.format(w, "{c}", .{c});
         },
