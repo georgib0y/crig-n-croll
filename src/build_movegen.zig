@@ -7,12 +7,12 @@ const File = board.File;
 const Rank = board.Rank;
 
 // const RANDOM_SEED: u64 = 7252092290257123456;
-const RANDOM_SEED: u64 = 9379609607221297880;
+const RANDOM_SEED: u64 = 16013208288946525155;
 var rng = std.Random.DefaultPrng.init(RANDOM_SEED);
 
 var zobrist: [781]u64 = undefined;
 
-fn inti_zobrist() void {
+fn init_zobrist() void {
     for (0..zobrist.len) |i| {
         zobrist[i] = rng.next();
     }
@@ -119,8 +119,8 @@ pub fn init_super_moves() void {
 
 fn write_int_array(w: anytype, comptime T: type, a: []T, name: []const u8) !void {
     try std.fmt.format(w, "pub const {s}: [{d}]{s} = .{{\n", .{ name, a.len, @typeName(T) });
-    for (a) |bb| {
-        try std.fmt.format(w, "\t0x{X},\n", .{bb});
+    for (a) |i| {
+        try std.fmt.format(w, "\t0x{X},\n", .{i});
     }
     try std.fmt.format(w, "}};\n", .{});
 }
@@ -147,6 +147,8 @@ fn write_sq_mag(w: anytype, a: []SquareMagic, name: []const u8) !void {
 
 pub fn main() !void {
     try gen_magics();
+
+    init_zobrist();
 
     init_pawn_attacks();
     init_knight_move_table();
@@ -415,16 +417,6 @@ fn gen_magic(move_table: []BB, comptime sq: comptime_int, comptime bits: comptim
 }
 
 pub fn gen_magics() !void {
-    // const rmags = @constCast(&rook_magics);
-    // const rmoves = @constCast(&rook_move_table);
-
-    // const bmags = @constCast(&bishop_magics);
-    // const bmoves = @constCast(&bishop_move_table);
-    // inline for (0..64) |sq| {
-    //     rmags[sq] = try gen_magic(&rmoves[sq], sq, RSHIFT, true);
-    //     bmags[sq] = try gen_magic(&bmoves[sq], sq, BSHIFT, false);
-    // }
-
     inline for (0..64) |sq| {
         rook_magics[sq] = try gen_magic(&rook_move_table[sq], sq, RSHIFT, true);
         bishop_magics[sq] = try gen_magic(&bishop_move_table[sq], sq, BSHIFT, false);

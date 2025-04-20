@@ -25,7 +25,7 @@ fn perftree(b: *Board, depth: usize) usize {
 
     var mc: usize = 0;
 
-    var ml = movegen.new_move_list(depth);
+    var ml = movegen.MoveList.new();
     const checked = b.is_in_check();
     movegen.gen_moves(&ml, b, checked);
 
@@ -46,7 +46,7 @@ fn perftree(b: *Board, depth: usize) usize {
 fn perftree_root(w: anytype, b: *Board, depth: usize) !void {
     var total_mc: usize = 0;
 
-    var ml = movegen.new_move_list(depth);
+    var ml = movegen.MoveList.new();
     const checked = b.is_in_check();
     movegen.gen_moves(&ml, b, checked);
 

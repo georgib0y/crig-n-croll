@@ -1,5 +1,71 @@
 const std = @import("std");
 
+const ExeConfig = struct {
+    name: []const u8,
+    root_src: []const u8,
+    step: []const u8,
+    desc: []const u8,
+};
+
+const exes = [_]ExeConfig{
+    .{
+        .name = "crig_n_croll",
+        .root_src = "src/main.zig",
+        .step = "run",
+        .desc = "Run the app",
+    },
+    .{
+        .name = "perftree",
+        .root_src = "src/perftree.zig",
+        .step = "perftree",
+        .desc = "Run perftree",
+    },
+    .{
+        .name = "perft",
+        .root_src = "src/perft.zig",
+        .step = "perft",
+        .desc = "Run perft",
+    },
+    .{
+        .name = "strength_test",
+        .root_src = "src/strength_testing.zig",
+        .step = "st",
+        .desc = "Run strength testing",
+    },
+};
+
+fn add_runnable_exe(
+    b: *std.Build,
+    exe_config: ExeConfig,
+    movegen_out: std.Build.LazyPath,
+    optimize: std.builtin.OptimizeMode,
+    target: std.Build.ResolvedTarget,
+) void {
+    const exe = b.addExecutable(.{
+        .name = exe_config.name,
+        .root_source_file = b.path(exe_config.root_src),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    exe.root_module.addAnonymousImport("built_movegen", .{
+        .root_source_file = movegen_out,
+    });
+
+    b.installArtifact(exe);
+
+    const cmd = b.addRunArtifact(exe);
+
+    cmd.step.dependOn(b.getInstallStep());
+
+    if (b.args) |args| {
+        cmd.addArgs(args);
+    }
+
+    const step = b.step(exe_config.step, exe_config.desc);
+    step.dependOn(&cmd.step);
+}
+
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
 // runner.
@@ -25,78 +91,7 @@ pub fn build(b: *std.Build) void {
     const movegen_step = b.addRunArtifact(movegen);
     const movegen_out = movegen_step.addOutputFileArg("built_movegen.zig");
 
-    const exe = b.addExecutable(.{
-        .name = "crig_n_croll",
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    exe.root_module.addAnonymousImport("built_movegen", .{
-        .root_source_file = movegen_out,
-    });
-
-    // This declares intent for the executable to be installed into the
-    // standard location when the user invokes the "install" step (the default
-    // step when running `zig build`).
-    b.installArtifact(exe);
-
-    // This *creates* a Run step in the build graph, to be executed when another
-    // step is evaluated that depends on it. The next line below will establish
-    // such a dependency.
-    const run_cmd = b.addRunArtifact(exe);
-
-    // By making the run step depend on the install step, it will be run from the
-    // installation directory rather than directly from within the cache directory.
-    // This is not necessary, however, if the application depends on other installed
-    // files, this ensures they will be present and in the expected location.
-    run_cmd.step.dependOn(b.getInstallStep());
-
-    // This allows the user to pass arguments to the application in the build
-    // command itself, like this: `zig build run -- arg1 arg2 etc`
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
+    for (exes) |exe_config| {
+        add_runnable_exe(b, exe_config, movegen_out, optimize, target);
     }
-
-    // This creates a build step. It will be visible in the `zig build --help` menu,
-    // and can be selected like this: `zig build run`
-    // This will evaluate the `run` step rather than the default, which is "install".
-    const run_step = b.step("run", "Run the app");
-    run_step.dependOn(&run_cmd.step);
-
-    const exe_unit_tests = b.addTest(.{
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
-
-    // Similar to creating the run step earlier, this exposes a `test` step to
-    // the `zig build --help` menu, providing a way for the user to request
-    // running the unit tests.
-    const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&run_exe_unit_tests.step);
-
-    // perftree executable
-    const pt_exe = b.addExecutable(.{
-        .name = "perftree",
-        .root_source_file = b.path("src/perftree.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    pt_exe.root_module.addAnonymousImport("built_movegen", .{
-        .root_source_file = movegen_out,
-    });
-
-    b.installArtifact(pt_exe);
-    const pt_cmd = b.addRunArtifact(pt_exe);
-    pt_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| {
-        pt_cmd.addArgs(args);
-    }
-
-    const pt_step = b.step("perftree", "Run Perftree");
-    pt_step.dependOn(&pt_cmd.step);
 }

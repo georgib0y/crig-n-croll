@@ -51,8 +51,8 @@ pub fn display_move(m: Move, w: anytype) !void {
     try std.fmt.format(w, " ({d})", .{m.to});
 
     try std.fmt.format(w, ", piece: {s}, xpeice {s}, mt: {s}\n", .{
-        @tagName(@as(Piece, @enumFromInt(m.piece))),
-        @tagName(@as(Piece, @enumFromInt(m.xpiece))),
+        @tagName(m.piece),
+        @tagName(m.xpiece),
         @tagName(m.mt),
     });
 }
@@ -102,7 +102,7 @@ pub fn display_bb(bb: BB, writer: anytype) !void {
 }
 
 pub fn log_board(b: Board, comptime log_fn: fn (comptime []const u8, anytype) void) void {
-    var buf: [256]u8 = undefined;
+    var buf: [512]u8 = undefined;
     var fbs = std.io.fixedBufferStream(&buf);
     // 256 bytes will always be enough to print a board
     b.display(fbs.writer()) catch unreachable;
@@ -133,5 +133,11 @@ pub fn display_board(b: Board, writer: anytype) !void {
         try std.fmt.format(writer, "\n", .{});
     }
 
-    try std.fmt.format(writer, "\n   A  B  C  D  E  F  G  H\n\n", .{});
+    try std.fmt.format(writer, "\n   A  B  C  D  E  F  G  H\n", .{});
+    try std.fmt.format(writer, "ctm: {s}\tcastling: 0b{b}\tep: {d}\thash: 0x{X}\n\n", .{
+        if (b.ctm == board.Colour.WHITE) "w" else "b",
+        b.castling,
+        b.ep,
+        b.hash,
+    });
 }

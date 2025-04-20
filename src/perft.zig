@@ -22,7 +22,7 @@ pub fn main() !void {
 }
 
 // fen == null for startpos
-pub fn perft_fen(fen: ?[]const u8, depth: usize, expected: usize) !void {
+pub fn perft_fen(fen: ?[]const u8, depth: i32, expected: usize) !void {
     var b = if (fen) |f| try board.board_from_fen(f) else board.default_board();
     std.debug.print("Starting perft for {s}\n", .{fen orelse "startpos"});
     var timer = try std.time.Timer.start();
@@ -57,7 +57,7 @@ fn perft(b: *const Board, depth: usize) usize {
     return mc;
 }
 
-fn perft_hash(b: *const Board, depth: usize) usize {
+fn perft_hash(b: *const Board, depth: i32) i32 {
     if (depth == 0) {
         return 1;
     }
@@ -67,10 +67,10 @@ fn perft_hash(b: *const Board, depth: usize) usize {
     }
 
     const checked = b.is_in_check();
-    var ml = movegen.new_move_list(depth);
+    var ml = movegen.MoveList.new();
     movegen.gen_moves(&ml, b, checked);
 
-    var mc: usize = 0;
+    var mc: i32 = 0;
     var next: Board = undefined;
     while (ml.next()) |m| {
         b.copy_make(&next, m);
@@ -81,7 +81,7 @@ fn perft_hash(b: *const Board, depth: usize) usize {
         mc += perft_hash(&next, depth - 1);
     }
 
-    tt.set_entry(b.hash, mc, depth);
+    tt.set_entry(b.hash, mc, .PV, @intCast(depth));
     return mc;
 }
 

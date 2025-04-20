@@ -6,6 +6,8 @@ const MoveType = movegen.MoveType;
 const Move = movegen.Move;
 const util = @import("util.zig");
 
+const tt = @import("tt.zig");
+
 pub const BB = u64;
 
 pub const CastleState = u8;
@@ -68,27 +70,31 @@ pub const Piece = enum(u4) {
         return @enumFromInt(self.idx(c));
     }
 
-    fn pieces() []const Piece {
-        return std.meta.fields(Piece)[0..12];
+    pub fn pieces() [12]Piece {
+        var p: [12]Piece = undefined;
+        for (0..12) |i| {
+            p[i] = @enumFromInt(i);
+        }
+        return p;
     }
 
     fn is_rook_like(self: Piece) bool {
         return switch (self) {
-            Piece.ROOK, Piece.ROOK_B, Piece.QUEEN, Piece.QUEEN_B => true,
+            .ROOK, .ROOK_B, .QUEEN, .QUEEN_B => true,
             else => false,
         };
     }
 
     fn is_bishop_like(self: Piece) bool {
         return switch (self) {
-            Piece.BISHOP, Piece.BISHOP_B, Piece.QUEEN, Piece.QUEEN_B => true,
+            .BISHOP, .BISHOP_B, .QUEEN, .QUEEN_B => true,
             else => false,
         };
     }
 
     pub fn is_slider(self: Piece) bool {
         return switch (self) {
-            Piece.PAWN, Piece.PAWN_B, Piece.KNIGHT, Piece.KNIGHT_B, Piece.KING, Piece.KING_B => false,
+            .PAWN, .PAWN_B, .KNIGHT, .KNIGHT_B, .KING, .KING_B => false,
             else => true,
         };
     }
@@ -96,41 +102,39 @@ pub const Piece = enum(u4) {
 
 pub fn piece_from_char(c: u8) ?Piece {
     return switch (c) {
-        'P' => Piece.PAWN,
-        'p' => Piece.PAWN_B,
-        'N' => Piece.KNIGHT,
-        'n' => Piece.KNIGHT_B,
-        'R' => Piece.ROOK,
-        'r' => Piece.ROOK_B,
-        'B' => Piece.BISHOP,
-        'b' => Piece.BISHOP_B,
-        'Q' => Piece.QUEEN,
-        'q' => Piece.QUEEN_B,
-        'K' => Piece.KING,
-        'k' => Piece.KING_B,
+        'P' => .PAWN,
+        'p' => .PAWN_B,
+        'N' => .KNIGHT,
+        'n' => .KNIGHT_B,
+        'R' => .ROOK,
+        'r' => .ROOK_B,
+        'B' => .BISHOP,
+        'b' => .BISHOP_B,
+        'Q' => .QUEEN,
+        'q' => .QUEEN_B,
+        'K' => .KING,
+        'k' => .KING_B,
         else => null,
     };
 }
 
 pub fn char_from_piece(p: Piece) u8 {
     return switch (p) {
-        Piece.PAWN => 'P',
-        Piece.PAWN_B => 'p',
-        Piece.KNIGHT => 'N',
-        Piece.KNIGHT_B => 'n',
-        Piece.ROOK => 'R',
-        Piece.ROOK_B => 'r',
-        Piece.BISHOP => 'B',
-        Piece.BISHOP_B => 'b',
-        Piece.QUEEN => 'Q',
-        Piece.QUEEN_B => 'q',
-        Piece.KING => 'K',
-        Piece.KING_B => 'k',
-        Piece.NONE => '.',
+        .PAWN => 'P',
+        .PAWN_B => 'p',
+        .KNIGHT => 'N',
+        .KNIGHT_B => 'n',
+        .ROOK => 'R',
+        .ROOK_B => 'r',
+        .BISHOP => 'B',
+        .BISHOP_B => 'b',
+        .QUEEN => 'Q',
+        .QUEEN_B => 'q',
+        .KING => 'K',
+        .KING_B => 'k',
+        .NONE => '.',
     };
 }
-
-pub const UtilBB = enum { ALL_W, ALL_B, ALL };
 
 pub const Board = struct {
     pieces: [12]BB,
@@ -155,12 +159,12 @@ pub const Board = struct {
     }
 
     pub inline fn all_bb(self: *const Board) BB {
-        return self.util[@intFromEnum(UtilBB.ALL)];
+        return self.util[2];
     }
 
-    pub fn toggle_piece(self: *Board, p: Piece, c: Colour, bb: BB) void {
-        const idx = @intFromEnum(p) + @intFromEnum(c);
-        self.pieces[idx] ^= bb;
+    pub fn toggle_piece(self: *Board, p: Piece, sq: usize) void {
+        self.pieces[@intFromEnum(p)] ^= square(sq);
+        self.hash ^= tt.piece_zobrist(p, sq);
     }
 
     pub fn toggle_colour_pieces(self: *Board, c: Colour, bb: BB) void {
@@ -168,7 +172,7 @@ pub const Board = struct {
     }
 
     pub fn toggle_all_pieces(self: *Board, bb: BB) void {
-        self.util[@intFromEnum(UtilBB.ALL)] ^= bb;
+        self.util[2] ^= bb;
     }
 
     pub fn get_piece(self: *const Board, sq: usize) Piece {
@@ -198,76 +202,79 @@ pub const Board = struct {
         var atts: BB = 0;
         // add pawn attacks, need to get the inverted pawn attacsk for the attacking
         // colour as we are working backwards from sq
-        atts |= movegen.pawn_att(sq, attackers.opp()) & self.piece_bb(Piece.PAWN, attackers);
-        atts |= movegen.knight_move(sq) & self.piece_bb(Piece.KNIGHT, attackers);
-        atts |= movegen.king_move(sq) & self.piece_bb(Piece.KING, attackers);
+        atts |= movegen.pawn_att(sq, attackers.opp()) & self.piece_bb(.PAWN, attackers);
+        atts |= movegen.knight_move(sq) & self.piece_bb(.KNIGHT, attackers);
+        atts |= movegen.king_move(sq) & self.piece_bb(.KING, attackers);
 
-        const rq: BB = self.piece_bb(Piece.ROOK, attackers) | self.piece_bb(Piece.QUEEN, attackers);
+        const rq: BB = self.piece_bb(.ROOK, attackers) | self.piece_bb(.QUEEN, attackers);
         atts |= movegen.lookup_rook(self.all_bb(), sq) & rq;
 
-        const bq: BB = self.piece_bb(Piece.BISHOP, attackers) | self.piece_bb(Piece.QUEEN, attackers);
+        const bq: BB = self.piece_bb(.BISHOP, attackers) | self.piece_bb(.QUEEN, attackers);
         atts |= movegen.lookup_bishop(self.all_bb(), sq) & bq;
 
         return atts;
     }
 
     pub fn is_in_check(self: *const Board) bool {
-        const king_sq: usize = @ctz(self.piece_bb(Piece.KING, self.ctm));
+        const king_sq: usize = @ctz(self.piece_bb(.KING, self.ctm));
         return self.attackers_of_sq(king_sq, self.ctm.opp()) > 0;
     }
 
     fn set_castle_state(b: *Board, p: Piece, from: usize, to: usize) void {
         // WKINGSIDE 0b1000
-        if ((p == Piece.KING or from == 7 or to == 7) and b.castling & 0b1000 > 0) {
+        if ((p == .KING or from == 7 or to == 7) and b.castling & 0b1000 > 0) {
             b.castling &= 0b0111;
+            b.hash ^= tt.castle_zobrist(.WKS);
         }
 
         // WQUEENSIDE 0b100
-        if ((p == Piece.KING or from == 0 or to == 0) and b.castling & 0b0100 > 0) {
+        if ((p == .KING or from == 0 or to == 0) and b.castling & 0b0100 > 0) {
             b.castling &= 0b1011;
+            b.hash ^= tt.castle_zobrist(.WQS);
         }
 
         // BKINGSIDE 0b10
-        if ((p == Piece.KING_B or from == 63 or to == 63) and b.castling & 0b0010 > 0) {
+        if ((p == .KING_B or from == 63 or to == 63) and b.castling & 0b0010 > 0) {
             b.castling &= 0b1101;
+            b.hash ^= tt.castle_zobrist(.BKS);
         }
 
         // BQUEENSIDE 0b1
-        if ((p == Piece.KING_B or from == 56 or to == 56) and b.castling & 0b0001 > 0) {
+        if ((p == .KING_B or from == 56 or to == 56) and b.castling & 0b0001 > 0) {
             b.castling &= 0b1110;
+            b.hash ^= tt.castle_zobrist(.BQS);
         }
     }
 
     fn apply_quiet(self: *Board, p: Piece) void {
-        switch (p) {
-            Piece.PAWN, Piece.PAWN_B => self.halfmove = 0,
-            else => return,
-        }
+        self.halfmove = self.halfmove * @as(u8, @intFromBool(@intFromEnum(p) < 2));
     }
 
     fn apply_double(self: *Board, to: usize) void {
         const ep: usize = to - 8 + (@intFromEnum(self.ctm) * 16);
         self.ep = @intCast(ep);
+        self.hash ^= tt.ep_zobrist(ep);
     }
 
     fn apply_cap(self: *Board, to: usize, xpiece: Piece) void {
         const to_sq = square(to);
-        self.toggle_piece(xpiece, Colour.WHITE, to_sq);
+        self.toggle_piece(xpiece, to);
         self.toggle_colour_pieces(self.ctm.opp(), to_sq);
         self.toggle_all_pieces(to_sq);
     }
 
     fn apply_castle(self: *Board, c: Colour, from: usize, to: usize) void {
         const from_to: BB = square(from) | square(to);
-        self.toggle_piece(Piece.ROOK, c, from_to);
+        self.toggle_piece(Piece.ROOK.with_ctm(c), from);
+        self.toggle_piece(Piece.ROOK.with_ctm(c), to);
         self.toggle_colour_pieces(c, from_to);
         self.toggle_all_pieces(from_to);
     }
 
     fn apply_promo(self: *Board, xpiece: Piece, to: usize) void {
         // toggle pawn off and toggle the promo on
-        self.toggle_piece(Piece.PAWN, self.ctm, square(to));
-        self.toggle_piece(xpiece, Colour.WHITE, square(to));
+        self.toggle_piece(Piece.PAWN.with_ctm(self.ctm), to);
+        self.toggle_piece(xpiece, to);
         self.halfmove = 0;
     }
 
@@ -276,17 +283,17 @@ pub const Board = struct {
         const promo_p: Piece = @enumFromInt((@intFromEnum(mt) - 7) * 2);
 
         // toggle captured piece
-        self.toggle_piece(xpiece, Colour.WHITE, to_sq);
+        self.toggle_piece(xpiece, to);
         self.toggle_colour_pieces(self.ctm.opp(), to_sq);
 
         // retoggle piece (as its been replaces by the capturer)
         self.toggle_all_pieces(to_sq);
 
         // toggle pawn off
-        self.toggle_piece(Piece.PAWN, self.ctm, to_sq);
+        self.toggle_piece(Piece.PAWN.with_ctm(self.ctm), to);
 
         // toggle promo on
-        self.toggle_piece(promo_p, self.ctm, to_sq);
+        self.toggle_piece(promo_p.with_ctm(self.ctm), to);
 
         self.halfmove = 0;
     }
@@ -295,7 +302,7 @@ pub const Board = struct {
         const ep: usize = to - 8 + (@intFromEnum(self.ctm) * 16);
         const ep_sq = square(ep);
         // toggle capture pawn off
-        self.toggle_piece(Piece.PAWN, self.ctm.opp(), ep_sq);
+        self.toggle_piece(Piece.PAWN.with_ctm(self.ctm.opp()), ep);
         self.toggle_colour_pieces(self.ctm.opp(), ep_sq);
         self.toggle_all_pieces(ep_sq);
 
@@ -327,18 +334,22 @@ pub const Board = struct {
 
         const from_to: BB = square(from) | square(to);
 
-        dest.toggle_piece(piece, Colour.WHITE, from_to);
+        dest.toggle_piece(piece, from);
+        dest.toggle_piece(piece, to);
         dest.toggle_colour_pieces(dest.ctm, from_to);
         dest.toggle_all_pieces(from_to);
 
         dest.set_castle_state(piece, from, to);
 
+        // unset the ep from the hash
+        dest.hash ^= tt.ep_zobrist(dest.ep) * @as(u64, @intFromBool(dest.ep < 64));
         dest.ep = 64;
         dest.halfmove += 1;
 
         dest.apply_move(to, piece, xpiece, m.mt);
 
         dest.ctm = self.ctm.opp();
+        dest.hash ^= tt.colour_zobrist();
     }
 
     pub fn log(self: Board, comptime log_fn: fn (comptime []const u8, anytype) void) void {
@@ -351,7 +362,7 @@ pub const Board = struct {
 };
 
 pub fn default_board() Board {
-    const board = Board{
+    var board = Board{
         .pieces = .{
             0x000000000000FF00, // wp 0
             0x00FF000000000000, // bp 1
@@ -382,7 +393,24 @@ pub fn default_board() Board {
 
     // TODO hash and eval
 
+    board.hash = tt.hash_board(&board);
     return board;
+}
+
+pub fn cmp_boards(b1: *const Board, b2: *const Board) bool {
+    for (b1.pieces, b2.pieces) |p1, p2| {
+        if (p1 != p2) return false;
+    }
+    for (b1.util, b2.util) |util1, util2| {
+        if (util1 != util2) return false;
+    }
+
+    if (b1.ctm != b2.ctm) return false;
+    if (b1.castling != b2.castling) return false;
+    if (b1.ep != b2.ep) return false;
+    if (b1.hash != b2.hash) return false;
+
+    return true;
 }
 
 // assums pieces and util have been zeroed
@@ -425,8 +453,8 @@ fn parse_ctm(ctm_str: []const u8) !Colour {
     }
 
     return switch (ctm_str[0]) {
-        'w' => Colour.WHITE,
-        'b' => Colour.BLACK,
+        'w' => .WHITE,
+        'b' => .BLACK,
         else => error.InvalidCtmChar,
     };
 }
@@ -488,6 +516,8 @@ pub fn board_from_fen(fen: []const u8) !Board {
 
     const ep_str = it.next() orelse return error.InvalidFenNoEp;
     b.ep = try parse_ep(ep_str);
+
+    b.hash = tt.hash_board(&b);
 
     const halfmove_str = it.next() orelse return b;
     b.halfmove = std.fmt.parseInt(u8, halfmove_str, 10) catch return error.InvalidFenBadHalfmove;
