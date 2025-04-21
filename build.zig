@@ -37,7 +37,7 @@ const exes = [_]ExeConfig{
 fn add_runnable_exe(
     b: *std.Build,
     exe_config: ExeConfig,
-    movegen_out: std.Build.LazyPath,
+    consts_out: std.Build.LazyPath,
     optimize: std.builtin.OptimizeMode,
     target: std.Build.ResolvedTarget,
 ) void {
@@ -48,8 +48,8 @@ fn add_runnable_exe(
         .optimize = optimize,
     });
 
-    exe.root_module.addAnonymousImport("built_movegen", .{
-        .root_source_file = movegen_out,
+    exe.root_module.addAnonymousImport("consts", .{
+        .root_source_file = consts_out,
     });
 
     b.installArtifact(exe);
@@ -82,16 +82,16 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     // generate the magics at build time
-    const movegen = b.addExecutable(.{
-        .name = "movegen",
-        .root_source_file = b.path("src/build_movegen.zig"),
+    const consts = b.addExecutable(.{
+        .name = "buildtime_consts_gen",
+        .root_source_file = b.path("src/buildtime_consts.zig"),
         .target = b.graph.host,
     });
 
-    const movegen_step = b.addRunArtifact(movegen);
-    const movegen_out = movegen_step.addOutputFileArg("built_movegen.zig");
+    const consts_step = b.addRunArtifact(consts);
+    const consts_out = consts_step.addOutputFileArg("buildtime_consts.zig");
 
     for (exes) |exe_config| {
-        add_runnable_exe(b, exe_config, movegen_out, optimize, target);
+        add_runnable_exe(b, exe_config, consts_out, optimize, target);
     }
 }

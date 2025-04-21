@@ -92,11 +92,17 @@ fn alpha_beta_search(b: *const Board, alpha: i32, beta: i32, depth: i32) i32 {
     var score_type: tt.ScoreType = .Alpha;
     while (ml.next()) |m| {
         b.copy_make(&next, m);
+
         if (!movegen.is_legal_move(&next, m, checked)) {
             continue;
         }
 
         has_moved = true;
+
+        // const eval_val = eval.score_board(&next);
+        // if (next.mg_val != eval_val) {
+        //     std.log.err("next val increment {d} not eq to score_board {d}", .{ next.mg_val, eval_val });
+        // }
 
         const score = -alpha_beta_search(&next, -beta, -a, depth - 1);
         if (score > best_score) {

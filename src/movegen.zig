@@ -12,15 +12,15 @@ const Rank = board.Rank;
 const util = @import("util.zig");
 const log_bb = util.log_bb;
 
-const built_movegen = @import("built_movegen");
-const pawn_attack_table = built_movegen.pawn_attack_table;
-const knight_move_table = built_movegen.knight_move_table;
-const king_move_table = built_movegen.king_move_table;
-const super_moves = built_movegen.super_moves;
-pub const rook_magics = built_movegen.rook_magics;
-const rook_move_table = built_movegen.rook_move_table;
-pub const bishop_magics = built_movegen.bishop_magics;
-const bishop_move_table = built_movegen.bishop_move_table;
+const consts = @import("consts");
+const pawn_attack_table = consts.pawn_attack_table;
+const knight_move_table = consts.knight_move_table;
+const king_move_table = consts.king_move_table;
+const super_moves = consts.super_moves;
+pub const rook_magics = consts.rook_magics;
+const rook_move_table = consts.rook_move_table;
+pub const bishop_magics = consts.bishop_magics;
+const bishop_move_table = consts.bishop_move_table;
 
 const tt = @import("tt.zig");
 const search = @import("search.zig");

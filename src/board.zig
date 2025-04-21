@@ -5,7 +5,7 @@ const movegen = @import("movegen.zig");
 const MoveType = movegen.MoveType;
 const Move = movegen.Move;
 const util = @import("util.zig");
-
+const eval = @import("eval.zig");
 const tt = @import("tt.zig");
 
 pub const BB = u64;
@@ -162,9 +162,18 @@ pub const Board = struct {
         return self.util[2];
     }
 
-    pub fn toggle_piece(self: *Board, p: Piece, sq: usize) void {
+    pub fn toggle_piece_on(self: *Board, p: Piece, sq: usize) void {
         self.pieces[@intFromEnum(p)] ^= square(sq);
         self.hash ^= tt.piece_zobrist(p, sq);
+        self.mg_val += eval.MAT_SCORES[@intFromEnum(p)];
+        self.mg_val += eval.MID_PST[@intFromEnum(p)][sq];
+    }
+
+    pub fn toggle_piece_off(self: *Board, p: Piece, sq: usize) void {
+        self.pieces[@intFromEnum(p)] ^= square(sq);
+        self.hash ^= tt.piece_zobrist(p, sq);
+        self.mg_val -= eval.MAT_SCORES[@intFromEnum(p)];
+        self.mg_val -= eval.MID_PST[@intFromEnum(p)][sq];
     }
 
     pub fn toggle_colour_pieces(self: *Board, c: Colour, bb: BB) void {
@@ -258,23 +267,23 @@ pub const Board = struct {
 
     fn apply_cap(self: *Board, to: usize, xpiece: Piece) void {
         const to_sq = square(to);
-        self.toggle_piece(xpiece, to);
+        self.toggle_piece_off(xpiece, to);
         self.toggle_colour_pieces(self.ctm.opp(), to_sq);
         self.toggle_all_pieces(to_sq);
     }
 
     fn apply_castle(self: *Board, c: Colour, from: usize, to: usize) void {
         const from_to: BB = square(from) | square(to);
-        self.toggle_piece(Piece.ROOK.with_ctm(c), from);
-        self.toggle_piece(Piece.ROOK.with_ctm(c), to);
+        self.toggle_piece_off(Piece.ROOK.with_ctm(c), from);
+        self.toggle_piece_on(Piece.ROOK.with_ctm(c), to);
         self.toggle_colour_pieces(c, from_to);
         self.toggle_all_pieces(from_to);
     }
 
     fn apply_promo(self: *Board, xpiece: Piece, to: usize) void {
         // toggle pawn off and toggle the promo on
-        self.toggle_piece(Piece.PAWN.with_ctm(self.ctm), to);
-        self.toggle_piece(xpiece, to);
+        self.toggle_piece_off(Piece.PAWN.with_ctm(self.ctm), to);
+        self.toggle_piece_on(xpiece, to);
         self.halfmove = 0;
     }
 
@@ -283,17 +292,17 @@ pub const Board = struct {
         const promo_p: Piece = @enumFromInt((@intFromEnum(mt) - 7) * 2);
 
         // toggle captured piece
-        self.toggle_piece(xpiece, to);
+        self.toggle_piece_off(xpiece, to);
         self.toggle_colour_pieces(self.ctm.opp(), to_sq);
 
         // retoggle piece (as its been replaces by the capturer)
         self.toggle_all_pieces(to_sq);
 
         // toggle pawn off
-        self.toggle_piece(Piece.PAWN.with_ctm(self.ctm), to);
+        self.toggle_piece_off(Piece.PAWN.with_ctm(self.ctm), to);
 
         // toggle promo on
-        self.toggle_piece(promo_p.with_ctm(self.ctm), to);
+        self.toggle_piece_on(promo_p.with_ctm(self.ctm), to);
 
         self.halfmove = 0;
     }
@@ -302,7 +311,7 @@ pub const Board = struct {
         const ep: usize = to - 8 + (@intFromEnum(self.ctm) * 16);
         const ep_sq = square(ep);
         // toggle capture pawn off
-        self.toggle_piece(Piece.PAWN.with_ctm(self.ctm.opp()), ep);
+        self.toggle_piece_off(Piece.PAWN.with_ctm(self.ctm.opp()), ep);
         self.toggle_colour_pieces(self.ctm.opp(), ep_sq);
         self.toggle_all_pieces(ep_sq);
 
@@ -334,8 +343,8 @@ pub const Board = struct {
 
         const from_to: BB = square(from) | square(to);
 
-        dest.toggle_piece(piece, from);
-        dest.toggle_piece(piece, to);
+        dest.toggle_piece_off(piece, from);
+        dest.toggle_piece_on(piece, to);
         dest.toggle_colour_pieces(dest.ctm, from_to);
         dest.toggle_all_pieces(from_to);
 
@@ -394,6 +403,7 @@ pub fn default_board() Board {
     // TODO hash and eval
 
     board.hash = tt.hash_board(&board);
+    board.mg_val = eval.score_board(&board);
     return board;
 }
 
@@ -518,6 +528,7 @@ pub fn board_from_fen(fen: []const u8) !Board {
     b.ep = try parse_ep(ep_str);
 
     b.hash = tt.hash_board(&b);
+    b.mg_val = eval.score_board(&b);
 
     const halfmove_str = it.next() orelse return b;
     b.halfmove = std.fmt.parseInt(u8, halfmove_str, 10) catch return error.InvalidFenBadHalfmove;

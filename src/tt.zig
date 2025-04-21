@@ -9,7 +9,7 @@ const CastleState = board.CastleState;
 
 const Move = @import("movegen.zig").Move;
 
-const zobrist = @import("built_movegen").zobrist;
+const zobrist = @import("consts").zobrist;
 
 pub fn piece_zobrist(p: Piece, sq: usize) u64 {
     return zobrist[@as(usize, @intFromEnum(p)) * 64 + sq];
