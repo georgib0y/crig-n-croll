@@ -146,6 +146,7 @@ pub const Board = struct {
     hash: u64,
     mg_val: i32,
     eg_val: i32,
+    phase: u8,
 
     pub inline fn piece_bb(self: *const Board, p: Piece, c: Colour) BB {
         const pidx: usize = @intFromEnum(p);
@@ -165,15 +166,25 @@ pub const Board = struct {
     pub fn toggle_piece_on(self: *Board, p: Piece, sq: usize) void {
         self.pieces[@intFromEnum(p)] ^= square(sq);
         self.hash ^= tt.piece_zobrist(p, sq);
+
         self.mg_val += eval.MAT_SCORES[@intFromEnum(p)];
         self.mg_val += eval.MID_PST[@intFromEnum(p)][sq];
+        self.eg_val += eval.MAT_SCORES[@intFromEnum(p)];
+        self.eg_val += eval.END_PST[@intFromEnum(p)][sq];
+
+        self.phase += eval.PIECE_PHASE_VAL[@intFromEnum(p)];
     }
 
     pub fn toggle_piece_off(self: *Board, p: Piece, sq: usize) void {
         self.pieces[@intFromEnum(p)] ^= square(sq);
         self.hash ^= tt.piece_zobrist(p, sq);
+
         self.mg_val -= eval.MAT_SCORES[@intFromEnum(p)];
         self.mg_val -= eval.MID_PST[@intFromEnum(p)][sq];
+        self.eg_val -= eval.MAT_SCORES[@intFromEnum(p)];
+        self.eg_val -= eval.END_PST[@intFromEnum(p)][sq];
+
+        self.phase -= eval.PIECE_PHASE_VAL[@intFromEnum(p)];
     }
 
     pub fn toggle_colour_pieces(self: *Board, c: Colour, bb: BB) void {
@@ -398,12 +409,13 @@ pub fn default_board() Board {
         .hash = undefined,
         .mg_val = undefined,
         .eg_val = undefined,
+        .phase = undefined,
     };
 
     // TODO hash and eval
 
     board.hash = tt.hash_board(&board);
-    board.mg_val = eval.score_board(&board);
+    board.mg_val, board.eg_val, board.phase = eval.eval_board_full(&board);
     return board;
 }
 
@@ -528,7 +540,7 @@ pub fn board_from_fen(fen: []const u8) !Board {
     b.ep = try parse_ep(ep_str);
 
     b.hash = tt.hash_board(&b);
-    b.mg_val = eval.score_board(&b);
+    b.mg_val, b.eg_val, b.phase = eval.eval_board_full(&b);
 
     const halfmove_str = it.next() orelse return b;
     b.halfmove = std.fmt.parseInt(u8, halfmove_str, 10) catch return error.InvalidFenBadHalfmove;

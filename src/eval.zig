@@ -78,21 +78,44 @@ pub const END_PST: [12][64]i16 = .{
     consts.BKING_END_PST,
 };
 
-pub fn eval(b: *const Board) i32 {
-    const mul: i32 = if (b.ctm == .WHITE) 1 else -1;
-    return b.mg_val * mul;
-    // return score_board(b) * mul;
+// _strongly_ inspired by PeSTO's eval func
+// https://www.chessprogramming.org/PeSTO%27s_Evaluation_Function
+
+// the value that a piece has to influence mid game / end game phase
+pub const PIECE_PHASE_VAL: [12]u8 = .{ 0, 0, 1, 1, 1, 1, 2, 2, 4, 4, 0, 0 };
+
+fn tapered_eval(mg: i32, eg: i32, phase: u8) i32 {
+    const mg_phase = @min(phase, 24);
+    const eg_phase = 24 - mg_phase;
+    return @divTrunc(mg * mg_phase + eg * eg_phase, 24);
 }
 
-pub fn score_board(b: *const Board) i32 {
-    var val: i32 = 0;
+pub fn eval(b: *const Board) i32 {
+    const mul: i32 = if (b.ctm == .WHITE) 1 else -1;
+    return tapered_eval(b.mg_val, b.eg_val, b.phase) * mul;
+}
+
+pub fn eval_board_full(b: *const Board) struct { i32, i32, u8 } {
+    var mg_val: i32 = 0;
+    var eg_val: i32 = 0;
+    var phase: u8 = 0;
     for (0..64) |sq| {
         const p = b.get_piece(sq);
         if (p == .NONE) continue;
-        val += MAT_SCORES[@intFromEnum(p)];
-        val += MID_PST[@intFromEnum(p)][sq];
+        mg_val += MAT_SCORES[@intFromEnum(p)];
+        mg_val += MID_PST[@intFromEnum(p)][sq];
+        eg_val += MAT_SCORES[@intFromEnum(p)];
+        eg_val += END_PST[@intFromEnum(p)][sq];
+        phase += PIECE_PHASE_VAL[@intFromEnum(p)];
     }
-    return val;
+
+    return .{ mg_val, eg_val, phase };
+}
+
+pub fn board_score(b: *const Board) i32 {
+    const mul: i32 = if (b.ctm == .WHITE) 1 else -1;
+    const mg_val, const eg_val, const phase = eval_board_full(b);
+    return tapered_eval(mg_val, eg_val, phase) * mul;
 }
 
 const PROMO_MOVE_SCORE = 5000;

@@ -131,6 +131,18 @@ fn alpha_beta_search(b: *const Board, alpha: i32, beta: i32, depth: i32) !i32 {
     while (ml.next()) |m| {
         b.copy_make(&next, m);
 
+        // const inc = eval.eval(&next);
+        // const full = eval.board_score(&next);
+
+        // if (inc != full) {
+        //     std.log.err("full eval {d} not eq to inc eval {d}", .{ full, inc });
+        //     std.log.err("full = mg: {d} eg {d} phase {d}", eval.eval_board_full(&next));
+        //     std.log.err("inc = mg: {d} eg {d} phase {d}", .{ next.mg_val, next.eg_val, next.phase });
+
+        //     m.log(std.log.err);
+        //     next.log(std.log.err);
+        // }
+
         if (!movegen.is_legal_move(&next, m, checked)) {
             continue;
         }
