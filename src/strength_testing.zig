@@ -7,6 +7,7 @@ const MoveType = @import("movegen.zig").MoveType;
 const util = @import("util.zig");
 const search = @import("search.zig");
 const tt = @import("tt.zig");
+const UCI = @import("uci.zig").UCI;
 
 pub const std_options = .{ .log_level = std.log.Level.debug };
 
@@ -118,14 +119,24 @@ fn parse_epd(allocator: std.mem.Allocator, str: []const u8) !EPD {
     };
 }
 
-fn epd_search(epd: EPD) bool {
+fn epd_search(epd: EPD) !bool {
     std.log.debug("====== trying {s} ======", .{epd.id});
     epd.pos.log(std.log.debug);
     for (epd.bms) |bm| {
-        std.log.debug("--- expected move {s} {d} {s} ---", .{ @tagName(bm.piece), bm.to, @tagName(bm.mt) });
+        var buf: [4]u8 = undefined;
+        var fbs = std.io.fixedBufferStream(&buf);
+        try util.write_sq(fbs.writer(), bm.to);
+        std.log.debug("--- expected move {s} {s} ({d}) {s} ---", .{
+            @tagName(bm.piece),
+            fbs.getWritten(),
+            bm.to,
+            @tagName(bm.mt),
+        });
     }
 
-    const res = search.do_search(&epd.pos) catch {
+    var uci = UCI{ .board = epd.pos, .log_file = null };
+
+    const res = search.do_search(&uci, &epd.pos) catch {
         std.log.debug("{s} position failed low!", .{epd.id});
         return false;
     };
@@ -171,7 +182,7 @@ pub fn main() !void {
 
     if (std.mem.eql(u8, filename, "pos")) {
         const epd = try parse_epd(allocator, args.next() orelse usage_and_die());
-        const passed = epd_search(epd);
+        const passed = try epd_search(epd);
         std.log.info("{s} {s}", .{ epd.id, if (passed) "passed" else "failed" });
         return;
     }
@@ -197,7 +208,7 @@ pub fn main() !void {
         if (end) |e| if (count > e) break;
 
         const epd = try parse_epd(allocator, line);
-        const passed = epd_search(epd);
+        const passed = try epd_search(epd);
         if (passed) passed_count += 1 else failed_count += 1;
         std.log.info("{s} {s}", .{ epd.id, if (passed) "passed" else "failed" });
 

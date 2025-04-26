@@ -8,7 +8,7 @@ const movegen = @import("movegen.zig");
 const Move = movegen.Move;
 const MoveType = movegen.MoveType;
 
-fn write_sq(w: anytype, sq: usize) !void {
+pub fn write_sq(w: anytype, sq: usize) !void {
     if (sq > 64) {
         try std.fmt.format(w, "out of bounds ({d})", .{sq});
     }

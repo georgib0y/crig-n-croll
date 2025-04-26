@@ -5,31 +5,49 @@ const movegen = @import("movegen.zig");
 const Move = movegen.Move;
 const tt = @import("tt.zig");
 const eval = @import("eval.zig");
+const UCI = @import("uci.zig").UCI;
 
-const START_ITER_TIMEOUT_MS: u64 = 2000;
+pub const MAX_DEPTH = 200;
+const TIMEOUT_MS: u64 = 5000;
 
-const SearchResult = struct {
+pub const SearchResult = struct {
     score: i32,
     move: Move,
 };
 
-pub fn do_search(b: *const Board) !SearchResult {
-    return iterative_deepening(b);
-    // return root_search(b, -INF, INF, 7);
+var timer: std.time.Timer = undefined;
+var nodes: usize = 0;
+var start_depth: i32 = 0;
+
+fn is_out_of_time() bool {
+    // TODO check this optimisation - when to read timer
+    return 0xFFF & nodes == 0 and timer.read() / std.time.ns_per_ms > TIMEOUT_MS;
 }
 
-fn iterative_deepening(b: *const Board) !SearchResult {
-    // TODO better time controls
-    var depth: i32 = 1;
+pub fn do_search(uci: *UCI, b: *const Board) !SearchResult {
+    nodes = 0;
+    timer = try std.time.Timer.start();
+    return iterative_deepening(uci, b);
+}
 
+fn iterative_deepening(uci: *UCI, b: *const Board) !SearchResult {
     var res: ?SearchResult = null;
 
-    var timer = try std.time.Timer.start();
-    while (timer.read() / std.time.ns_per_ms < START_ITER_TIMEOUT_MS) : (depth += 1) {
-        res = root_search(b, -eval.INF, eval.INF, depth) catch {
-            std.log.err("root search failed low, trying next depth", .{});
-            continue;
+    for (1..MAX_DEPTH) |depth| {
+        std.log.debug("trying depth {d}", .{depth});
+        start_depth = @intCast(depth);
+        res = root_search(b, -eval.INF, eval.INF, @intCast(depth)) catch |err| {
+            switch (err) {
+                error.FailLow => {
+                    try uci.log_uci_error("root search failed low, trying next depth", .{});
+                    continue;
+                },
+                error.OutOfTime => break,
+                else => return err,
+            }
         };
+
+        try uci.send_info(res.?, &timer, nodes, depth);
     }
 
     return res orelse error.NoResultFound;
@@ -39,11 +57,12 @@ fn root_search(b: *const Board, alpha: i32, beta: i32, depth: i32) !SearchResult
     var a = alpha;
 
     const checked = b.is_in_check();
-    var ml = movegen.MoveList.new();
+    var ml = movegen.MoveList.new(b);
     movegen.gen_moves(&ml, b, checked);
 
     var best_score: ?i32 = null;
     var best_move: ?Move = null;
+    var score_type: tt.ScoreType = .Alpha;
 
     var has_moved = false;
     var next: Board = undefined;
@@ -54,41 +73,60 @@ fn root_search(b: *const Board, alpha: i32, beta: i32, depth: i32) !SearchResult
         }
 
         has_moved = true;
-        const score = -alpha_beta_search(&next, -beta, -a, depth);
+        const score = -try alpha_beta_search(&next, -beta, -a, depth);
         if (score > best_score orelse -eval.INF) {
             best_score = score;
             best_move = m;
         }
-        if (score > a) a = score;
-        if (score >= beta) break;
+        if (score > a) {
+            a = score;
+            score_type = .PV;
+        }
+        if (score >= beta) {
+            score_type = .Beta;
+            break;
+        }
     }
 
-    if (!has_moved) best_score = -eval.CHECKMATE;
+    if (!has_moved and checked) {
+        best_score = -eval.CHECKMATE;
+        score_type = .PV;
+    }
+
+    if (!has_moved and !checked) {
+        best_score = eval.STALEMATE;
+        score_type = .PV;
+    }
 
     if (best_score == null) return error.FailLow;
 
+    tt.set_entry(b.hash, best_score.?, score_type, depth, start_depth - depth, best_move.?);
     return SearchResult{ .score = best_score.?, .move = best_move.? };
 }
 
-fn alpha_beta_search(b: *const Board, alpha: i32, beta: i32, depth: i32) i32 {
+fn alpha_beta_search(b: *const Board, alpha: i32, beta: i32, depth: i32) !i32 {
+    nodes += 1;
+    if (is_out_of_time()) return error.OutOfTime;
+
     var a = alpha;
 
     if (depth == 0) {
         return quiesce_search(b, alpha, beta, 0);
     }
 
-    if (tt.get_score(b.hash, alpha, beta, depth)) |score| {
+    if (tt.get_score(b.hash, alpha, beta, depth, start_depth - depth)) |score| {
         return score;
     }
 
     const checked = b.is_in_check();
-    var ml = movegen.MoveList.new();
+    var ml = movegen.MoveList.new(b);
     movegen.gen_moves(&ml, b, checked);
 
     var has_moved = false;
     var next: Board = undefined;
 
     var best_score: i32 = -eval.INF;
+    var best_move: ?Move = null;
     var score_type: tt.ScoreType = .Alpha;
     while (ml.next()) |m| {
         b.copy_make(&next, m);
@@ -99,18 +137,18 @@ fn alpha_beta_search(b: *const Board, alpha: i32, beta: i32, depth: i32) i32 {
 
         has_moved = true;
 
-        // const eval_val = eval.score_board(&next);
-        // if (next.mg_val != eval_val) {
-        //     std.log.err("next val increment {d} not eq to score_board {d}", .{ next.mg_val, eval_val });
-        // }
-
-        const score = -alpha_beta_search(&next, -beta, -a, depth - 1);
+        const score = -try alpha_beta_search(&next, -beta, -a, depth - 1);
         if (score > best_score) {
             best_score = score;
+            best_move = m;
+        }
+
+        if (score > a) {
+            a = score;
             // TODO this when best_score raises or when alpha?
             score_type = .PV;
         }
-        if (score > a) a = score;
+
         if (score >= beta) {
             best_score = beta;
             score_type = .Beta;
@@ -118,16 +156,24 @@ fn alpha_beta_search(b: *const Board, alpha: i32, beta: i32, depth: i32) i32 {
         }
     }
 
-    if (!has_moved) {
-        best_score = -eval.CHECKMATE + depth;
+    if (!has_moved and checked) {
+        best_score = -eval.CHECKMATE + (start_depth - depth);
         score_type = .PV;
     }
 
-    tt.set_entry(b.hash, best_score, score_type, depth);
+    if (!has_moved and !checked) {
+        best_score = eval.STALEMATE;
+        score_type = .PV;
+    }
+
+    tt.set_entry(b.hash, best_score, score_type, depth, start_depth - depth, best_move);
     return best_score;
 }
 
-fn quiesce_search(b: *const Board, alpha: i32, beta: i32, depth: i32) i32 {
+fn quiesce_search(b: *const Board, alpha: i32, beta: i32, depth: i32) !i32 {
+    nodes += 1;
+    if (is_out_of_time()) return error.OutOfTime;
+
     var a = alpha;
     var val = eval.eval(b);
 
@@ -139,18 +185,20 @@ fn quiesce_search(b: *const Board, alpha: i32, beta: i32, depth: i32) i32 {
 
     if (a < val) a = val;
 
-    var ml = movegen.MoveList.new();
+    var ml = movegen.MoveList.new(b);
     movegen.gen_q_moves(&ml, b);
 
     var next: Board = undefined;
     while (ml.next()) |m| {
         if (m.xpiece == .KING or m.xpiece == .KING_B) {
-            return eval.CHECKMATE - depth;
+            // TODO This isn't quite checkmate, as there could be
+            // quiet moves that could have escaped it
+            return eval.CHECKMATE - (start_depth - depth);
         }
 
         b.copy_make(&next, m);
 
-        const score = -quiesce_search(&next, -beta, -a, depth - 1);
+        const score = -try quiesce_search(&next, -beta, -a, depth - 1);
 
         if (score >= beta) return score;
         if (score > val) val = score;

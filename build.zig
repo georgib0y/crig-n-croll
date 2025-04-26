@@ -9,7 +9,7 @@ const ExeConfig = struct {
 
 const exes = [_]ExeConfig{
     .{
-        .name = "crig_n_croll",
+        .name = "crig",
         .root_src = "src/main.zig",
         .step = "run",
         .desc = "Run the app",

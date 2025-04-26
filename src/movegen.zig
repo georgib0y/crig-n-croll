@@ -92,6 +92,10 @@ pub const Move = packed struct {
     }
 };
 
+pub fn moves_eql(m1: Move, m2: Move) bool {
+    return @as(u28, @bitCast(m1)) == @as(u28, @bitCast(m2));
+}
+
 pub fn new_move_from_uci(uci: []const u8, b: *const Board) !Move {
     if (uci.len < 4 or uci.len > 5) {
         return error.InvalidUciStrLen;
@@ -158,13 +162,20 @@ pub const MoveList = struct {
     scores: [256]i32,
     idx: usize,
     count: usize,
+    tt_bestmove: ?Move,
 
-    pub fn new() MoveList {
-        return MoveList{ .moves = undefined, .scores = undefined, .idx = 0, .count = 0 };
+    pub fn new(b: *const Board) MoveList {
+        return MoveList{
+            .moves = undefined,
+            .scores = undefined,
+            .idx = 0,
+            .count = 0,
+            .tt_bestmove = tt.get_best_move(b.hash),
+        };
     }
 
     fn append(self: *MoveList, m: Move) void {
-        self.scores[self.count] = eval.score_move(m);
+        self.scores[self.count] = eval.score_move(m, self.tt_bestmove);
         self.moves[self.count] = m;
         self.count += 1;
     }
@@ -287,11 +298,13 @@ fn wpawn_ep(b: *const Board, ml: *MoveList, pin_sqs: BB, target_sqs: BB) void {
 
     // back right
     if ((square(b.ep) & ((pawns & ~@intFromEnum(File.FA)) << 7) & opp << 8) > 0) {
-        ml.add_pawn_moves_cap(b, square(b.ep) >> 7, Piece.PAWN, 7, MoveType.EP);
+        const from = @ctz(square(b.ep) >> 7);
+        ml.append(Move.new(from, from + 7, Piece.PAWN, Piece.PAWN_B, .EP));
     }
 
     if ((square(b.ep) & ((pawns & ~@intFromEnum(File.FH)) << 9) & opp << 8) > 0) {
-        ml.add_pawn_moves_cap(b, square(b.ep) >> 9, Piece.PAWN, 9, MoveType.EP);
+        const from = @ctz(square(b.ep) >> 9);
+        ml.append(Move.new(from, from + 9, Piece.PAWN, Piece.PAWN_B, .EP));
     }
 }
 
@@ -351,12 +364,14 @@ fn bpawn_ep(b: *const Board, ml: *MoveList, pin_sqs: BB, target_sqs: BB) void {
 
     // down left
     if ((square(b.ep) & ((pawns & ~@intFromEnum(File.FA)) >> 9) & opp >> 8) > 0) {
-        ml.add_pawn_moves_cap(b, square(b.ep) << 9, Piece.PAWN_B, -9, MoveType.EP);
+        const from = @ctz(square(b.ep) << 9);
+        ml.append(Move.new(from, from - 9, Piece.PAWN_B, Piece.PAWN, .EP));
     }
 
     // down right
     if ((square(b.ep) & ((pawns & ~@intFromEnum(File.FH)) >> 7) & opp >> 8) > 0) {
-        ml.add_pawn_moves_cap(b, square(b.ep) << 7, Piece.PAWN_B, -7, MoveType.EP);
+        const from = @ctz(square(b.ep) << 7);
+        ml.append(Move.new(from, from - 7, Piece.PAWN_B, Piece.PAWN, .EP));
     }
 }
 

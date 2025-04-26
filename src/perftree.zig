@@ -1,22 +1,9 @@
 const std = @import("std");
 const log = std.log;
-
 const board = @import("board.zig");
 const Board = board.Board;
 const movegen = @import("movegen.zig");
-
-fn process_moves(b: Board, move_str: []const u8) !Board {
-    var it = std.mem.splitScalar(u8, move_str, ' ');
-    var curr = b;
-    while (it.next()) |s| {
-        const m = try movegen.new_move_from_uci(s, &curr);
-        var next: Board = undefined;
-        curr.copy_make(&next, m);
-        curr = next;
-    }
-
-    return curr;
-}
+const uci = @import("uci.zig");
 
 fn perftree(b: *Board, depth: usize) usize {
     if (depth == 0) {
@@ -25,7 +12,7 @@ fn perftree(b: *Board, depth: usize) usize {
 
     var mc: usize = 0;
 
-    var ml = movegen.MoveList.new();
+    var ml = movegen.MoveList.new(b);
     const checked = b.is_in_check();
     movegen.gen_moves(&ml, b, checked);
 
@@ -46,7 +33,7 @@ fn perftree(b: *Board, depth: usize) usize {
 fn perftree_root(w: anytype, b: *Board, depth: usize) !void {
     var total_mc: usize = 0;
 
-    var ml = movegen.MoveList.new();
+    var ml = movegen.MoveList.new(b);
     const checked = b.is_in_check();
     movegen.gen_moves(&ml, b, checked);
 
@@ -78,7 +65,7 @@ pub fn main() !void {
     var b = try board.board_from_fen(arg);
 
     if (it.next()) |move_str| {
-        b = try process_moves(b, move_str);
+        b = try uci.process_moves(b, move_str);
     }
 
     log.debug("perftree position is:", .{});

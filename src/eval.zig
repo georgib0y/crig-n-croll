@@ -9,6 +9,7 @@ const consts = @import("consts");
 
 pub const INF: i32 = 1000000;
 pub const CHECKMATE: i32 = 100000;
+pub const STALEMATE: i32 = 0;
 
 pub const PAWN_VALUE: i32 = 100;
 const KNIGHT_VALUE: i32 = 325;
@@ -96,12 +97,15 @@ pub fn score_board(b: *const Board) i32 {
 
 const PROMO_MOVE_SCORE = 5000;
 const CAP_MOVE_SCORE = 10000;
+const TT_BEST_SCORE = 1000000;
 
 fn mvvlva(piece: Piece, xpiece: Piece) i32 {
     return PIECE_VALS[@intFromEnum(xpiece)] - PIECE_VALS[@intFromEnum(piece)];
 }
 
-pub fn score_move(m: Move) i32 {
+pub fn score_move(m: Move, tt_bestmove: ?Move) i32 {
+    if (tt_bestmove) |bm| if (movegen.moves_eql(m, bm)) return TT_BEST_SCORE;
+
     return switch (m.mt) {
         .QUIET, .DOUBLE, .WKINGSIDE, .BKINGSIDE, .WQUEENSIDE, .BQUEENSIDE => PIECE_VALS[@intFromEnum(m.piece)],
         .PROMO => PROMO_MOVE_SCORE + PIECE_VALS[@intFromEnum(m.xpiece)],
