@@ -162,6 +162,7 @@ pub const MoveList = struct {
     scores: [256]i32,
     idx: usize,
     count: usize,
+    board: *const Board,
     tt_bestmove: ?Move,
 
     pub fn new(b: *const Board) MoveList {
@@ -170,12 +171,13 @@ pub const MoveList = struct {
             .scores = undefined,
             .idx = 0,
             .count = 0,
+            .board = b,
             .tt_bestmove = tt.get_best_move(b.hash),
         };
     }
 
     fn append(self: *MoveList, m: Move) void {
-        self.scores[self.count] = eval.score_move(m, self.tt_bestmove);
+        self.scores[self.count] = eval.score_move(m, self.board, self.tt_bestmove);
         self.moves[self.count] = m;
         self.count += 1;
     }
@@ -193,8 +195,28 @@ pub const MoveList = struct {
             }
         }
 
-        if (m != null) self.scores[idx] = std.math.minInt(i32);
+        if (m == null) return null;
+        self.scores[idx] = std.math.minInt(i32);
         return m;
+    }
+
+    pub fn next_scored(self: *MoveList) ?struct { move: Move, score: i32 } {
+        var m: ?Move = null;
+        var idx: usize = 0;
+        var best_score: i32 = std.math.minInt(i32);
+
+        for (0..self.count) |i| {
+            if (self.scores[i] > best_score) {
+                m = self.moves[i];
+                idx = i;
+                best_score = self.scores[i];
+            }
+        }
+
+        if (m == null) return null;
+
+        self.scores[idx] = std.math.minInt(i32);
+        return .{ .move = m.?, .score = best_score };
     }
 
     pub fn reset(self: *MoveList) void {
@@ -211,12 +233,12 @@ pub const MoveList = struct {
         }
     }
 
-    fn add_pawn_moves_cap(self: *MoveList, b: *const Board, pawns: BB, comptime piece: Piece, comptime to_offset: comptime_int, comptime mt: MoveType) void {
+    fn add_pawn_moves_cap(self: *MoveList, pawns: BB, comptime piece: Piece, comptime to_offset: comptime_int, comptime mt: MoveType) void {
         var p = pawns;
         while (p > 0) : (p &= p - 1) {
             const from: usize = @ctz(p);
             const to: usize = @intCast(@as(isize, @intCast(from)) + @as(isize, to_offset));
-            const xpiece = b.get_piece(to);
+            const xpiece = self.board.get_piece(to);
             self.append(Move.new(from, to, piece, xpiece, mt));
         }
     }
@@ -229,11 +251,11 @@ pub const MoveList = struct {
         }
     }
 
-    fn add_caps(self: *MoveList, b: *const Board, from: usize, caps: BB, piece: Piece, mt: MoveType) void {
+    fn add_caps(self: *MoveList, from: usize, caps: BB, piece: Piece, mt: MoveType) void {
         var c = caps;
         while (c > 0) : (c &= c - 1) {
             const to: usize = @ctz(c);
-            self.append(Move.new(from, to, piece, b.get_piece(to), mt));
+            self.append(Move.new(from, to, piece, self.board.get_piece(to), mt));
         }
     }
 
@@ -242,15 +264,15 @@ pub const MoveList = struct {
     }
 };
 
-fn wpawn_quiet(b: *const Board, ml: *MoveList, pin_sqs: BB, target_sqs: BB) void {
-    const pawns = b.piece_bb(Piece.PAWN, Colour.WHITE) & ~pin_sqs;
-    const occ = b.all_bb() | ~target_sqs;
+fn wpawn_quiet(ml: *MoveList, pin_sqs: BB, target_sqs: BB) void {
+    const pawns = ml.board.piece_bb(Piece.PAWN, Colour.WHITE) & ~pin_sqs;
+    const occ = ml.board.all_bb() | ~target_sqs;
     const quiet = pawns & ~(occ >> 8);
 
     const push = quiet & ~@intFromEnum(Rank.R7);
     ml.add_pawn_moves_quiet(push, Piece.PAWN, 8, Piece.NONE, MoveType.QUIET);
 
-    const double_push = (pawns & @intFromEnum(Rank.R2)) & ~(occ >> 16) & ~(b.all_bb() >> 8);
+    const double_push = (pawns & @intFromEnum(Rank.R2)) & ~(occ >> 16) & ~(ml.board.all_bb() >> 8);
     ml.add_pawn_moves_quiet(double_push, Piece.PAWN, 16, Piece.NONE, MoveType.DOUBLE);
 
     const promo = quiet & @intFromEnum(Rank.R7);
@@ -261,62 +283,62 @@ fn wpawn_quiet(b: *const Board, ml: *MoveList, pin_sqs: BB, target_sqs: BB) void
     }
 }
 
-fn wpawn_attack(b: *const Board, ml: *MoveList, pin_sqs: BB, target_sqs: BB) void {
-    const pawns = b.piece_bb(Piece.PAWN, Colour.WHITE) & ~pin_sqs;
-    const opp = b.col_bb(Colour.BLACK) & target_sqs;
+fn wpawn_attack(ml: *MoveList, pin_sqs: BB, target_sqs: BB) void {
+    const pawns = ml.board.piece_bb(Piece.PAWN, Colour.WHITE) & ~pin_sqs;
+    const opp = ml.board.col_bb(Colour.BLACK) & target_sqs;
 
     const att_left = (pawns & ~@intFromEnum(File.FA)) & (opp >> 7);
     const att_right = (pawns & ~@intFromEnum(File.FH)) & (opp >> 9);
 
     // up left
-    ml.add_pawn_moves_cap(b, att_left & ~@intFromEnum(Rank.R7), Piece.PAWN, 7, MoveType.CAP);
+    ml.add_pawn_moves_cap(att_left & ~@intFromEnum(Rank.R7), Piece.PAWN, 7, MoveType.CAP);
     // up right
-    ml.add_pawn_moves_cap(b, att_right & ~@intFromEnum(Rank.R7), Piece.PAWN, 9, MoveType.CAP);
+    ml.add_pawn_moves_cap(att_right & ~@intFromEnum(Rank.R7), Piece.PAWN, 9, MoveType.CAP);
 
     const att_left_promo = att_left & @intFromEnum(Rank.R7);
     if (att_left_promo > 0) {
         inline for (PROMO_CAP_MTS) |mt| {
-            ml.add_pawn_moves_cap(b, att_left_promo, Piece.PAWN, 7, mt);
+            ml.add_pawn_moves_cap(att_left_promo, Piece.PAWN, 7, mt);
         }
     }
 
     const att_right_promo = att_right & @intFromEnum(Rank.R7);
     if (att_right_promo > 0) {
         inline for (PROMO_CAP_MTS) |mt| {
-            ml.add_pawn_moves_cap(b, att_right_promo, Piece.PAWN, 9, mt);
+            ml.add_pawn_moves_cap(att_right_promo, Piece.PAWN, 9, mt);
         }
     }
 }
 
-fn wpawn_ep(b: *const Board, ml: *MoveList, pin_sqs: BB, target_sqs: BB) void {
-    if (b.ep >= 64) {
+fn wpawn_ep(ml: *MoveList, pin_sqs: BB, target_sqs: BB) void {
+    if (ml.board.ep >= 64) {
         return;
     }
 
-    const pawns = b.piece_bb(Piece.PAWN, Colour.WHITE) & ~pin_sqs;
-    const opp = b.col_bb(Colour.BLACK) & target_sqs;
+    const pawns = ml.board.piece_bb(Piece.PAWN, Colour.WHITE) & ~pin_sqs;
+    const opp = ml.board.col_bb(Colour.BLACK) & target_sqs;
 
     // back right
-    if ((square(b.ep) & ((pawns & ~@intFromEnum(File.FA)) << 7) & opp << 8) > 0) {
-        const from = @ctz(square(b.ep) >> 7);
+    if ((square(ml.board.ep) & ((pawns & ~@intFromEnum(File.FA)) << 7) & opp << 8) > 0) {
+        const from = @ctz(square(ml.board.ep) >> 7);
         ml.append(Move.new(from, from + 7, Piece.PAWN, Piece.PAWN_B, .EP));
     }
 
-    if ((square(b.ep) & ((pawns & ~@intFromEnum(File.FH)) << 9) & opp << 8) > 0) {
-        const from = @ctz(square(b.ep) >> 9);
+    if ((square(ml.board.ep) & ((pawns & ~@intFromEnum(File.FH)) << 9) & opp << 8) > 0) {
+        const from = @ctz(square(ml.board.ep) >> 9);
         ml.append(Move.new(from, from + 9, Piece.PAWN, Piece.PAWN_B, .EP));
     }
 }
 
-fn bpawn_quiet(b: *const Board, ml: *MoveList, pin_sqs: BB, target_sqs: BB) void {
-    const pawns = b.piece_bb(Piece.PAWN, Colour.BLACK) & ~pin_sqs;
-    const occ = b.all_bb() | ~target_sqs;
+fn bpawn_quiet(ml: *MoveList, pin_sqs: BB, target_sqs: BB) void {
+    const pawns = ml.board.piece_bb(Piece.PAWN, Colour.BLACK) & ~pin_sqs;
+    const occ = ml.board.all_bb() | ~target_sqs;
     const quiet = pawns & ~(occ << 8);
 
     const push = quiet & ~@intFromEnum(Rank.R2);
     ml.add_pawn_moves_quiet(push, Piece.PAWN_B, -8, Piece.NONE, MoveType.QUIET);
 
-    const double_push = (pawns & @intFromEnum(Rank.R7)) & ~(occ << 16) & ~(b.all_bb() << 8);
+    const double_push = (pawns & @intFromEnum(Rank.R7)) & ~(occ << 16) & ~(ml.board.all_bb() << 8);
     ml.add_pawn_moves_quiet(double_push, Piece.PAWN_B, -16, Piece.NONE, MoveType.DOUBLE);
 
     const promo = quiet & @intFromEnum(Rank.R2);
@@ -327,76 +349,76 @@ fn bpawn_quiet(b: *const Board, ml: *MoveList, pin_sqs: BB, target_sqs: BB) void
     }
 }
 
-fn bpawn_attack(b: *const Board, ml: *MoveList, pin_sqs: BB, target_sqs: BB) void {
-    const pawns = b.piece_bb(Piece.PAWN, Colour.BLACK) & ~pin_sqs;
-    const opp = b.col_bb(Colour.WHITE) & target_sqs;
+fn bpawn_attack(ml: *MoveList, pin_sqs: BB, target_sqs: BB) void {
+    const pawns = ml.board.piece_bb(Piece.PAWN, Colour.BLACK) & ~pin_sqs;
+    const opp = ml.board.col_bb(Colour.WHITE) & target_sqs;
 
     const att_left = (pawns & ~@intFromEnum(File.FA)) & (opp << 9);
     const att_right = (pawns & ~@intFromEnum(File.FH)) & (opp << 7);
 
     // down left
-    ml.add_pawn_moves_cap(b, att_left & ~@intFromEnum(Rank.R2), Piece.PAWN_B, -9, MoveType.CAP);
+    ml.add_pawn_moves_cap(att_left & ~@intFromEnum(Rank.R2), Piece.PAWN_B, -9, MoveType.CAP);
     // down right
-    ml.add_pawn_moves_cap(b, att_right & ~@intFromEnum(Rank.R2), Piece.PAWN_B, -7, MoveType.CAP);
+    ml.add_pawn_moves_cap(att_right & ~@intFromEnum(Rank.R2), Piece.PAWN_B, -7, MoveType.CAP);
 
     const att_left_promo = att_left & @intFromEnum(Rank.R2);
     if (att_left_promo > 0) {
         inline for (PROMO_CAP_MTS) |mt| {
-            ml.add_pawn_moves_cap(b, att_left_promo, Piece.PAWN_B, -9, mt);
+            ml.add_pawn_moves_cap(att_left_promo, Piece.PAWN_B, -9, mt);
         }
     }
 
     const att_right_promo = att_right & @intFromEnum(Rank.R2);
     if (att_right_promo > 0) {
         inline for (PROMO_CAP_MTS) |mt| {
-            ml.add_pawn_moves_cap(b, att_right_promo, Piece.PAWN_B, -7, mt);
+            ml.add_pawn_moves_cap(att_right_promo, Piece.PAWN_B, -7, mt);
         }
     }
 }
 
-fn bpawn_ep(b: *const Board, ml: *MoveList, pin_sqs: BB, target_sqs: BB) void {
-    if (b.ep >= 64) {
+fn bpawn_ep(ml: *MoveList, pin_sqs: BB, target_sqs: BB) void {
+    if (ml.board.ep >= 64) {
         return;
     }
 
-    const pawns = b.piece_bb(Piece.PAWN, Colour.BLACK) & ~pin_sqs;
-    const opp = b.col_bb(Colour.WHITE) & target_sqs;
+    const pawns = ml.board.piece_bb(Piece.PAWN, Colour.BLACK) & ~pin_sqs;
+    const opp = ml.board.col_bb(Colour.WHITE) & target_sqs;
 
     // down left
-    if ((square(b.ep) & ((pawns & ~@intFromEnum(File.FA)) >> 9) & opp >> 8) > 0) {
-        const from = @ctz(square(b.ep) << 9);
+    if ((square(ml.board.ep) & ((pawns & ~@intFromEnum(File.FA)) >> 9) & opp >> 8) > 0) {
+        const from = @ctz(square(ml.board.ep) << 9);
         ml.append(Move.new(from, from - 9, Piece.PAWN_B, Piece.PAWN, .EP));
     }
 
     // down right
-    if ((square(b.ep) & ((pawns & ~@intFromEnum(File.FH)) >> 7) & opp >> 8) > 0) {
-        const from = @ctz(square(b.ep) << 7);
+    if ((square(ml.board.ep) & ((pawns & ~@intFromEnum(File.FH)) >> 7) & opp >> 8) > 0) {
+        const from = @ctz(square(ml.board.ep) << 7);
         ml.append(Move.new(from, from - 7, Piece.PAWN_B, Piece.PAWN, .EP));
     }
 }
 
-fn piece_quiet(ml: *MoveList, b: *const Board, comptime piece: Piece, comptime move_fn: fn (occ: BB, from: usize) BB, pin_sqs: BB, target_sqs: BB) void {
-    var pieces = b.piece_bb(piece, b.ctm) & ~pin_sqs;
+fn piece_quiet(ml: *MoveList, comptime piece: Piece, comptime move_fn: fn (occ: BB, from: usize) BB, pin_sqs: BB, target_sqs: BB) void {
+    var pieces = ml.board.piece_bb(piece, ml.board.ctm) & ~pin_sqs;
 
     while (pieces > 0) : (pieces &= pieces - 1) {
         const from: usize = @ctz(pieces);
         // const moves: BB = move_fn(b.all_bb(), from) & ~b.all_bb() & target_sqs;
-        const move_bb = move_fn(b.all_bb(), from);
-        const not_all = ~b.all_bb();
+        const move_bb = move_fn(ml.board.all_bb(), from);
+        const not_all = ~ml.board.all_bb();
         const moves = move_bb & not_all & target_sqs;
 
-        ml.add_quiets(from, moves, piece.with_ctm(b.ctm), MoveType.QUIET);
+        ml.add_quiets(from, moves, piece.with_ctm(ml.board.ctm), MoveType.QUIET);
     }
 }
 
-fn piece_attack(ml: *MoveList, b: *const Board, comptime piece: Piece, comptime move_fn: fn (occ: BB, from: usize) BB, pin_sqs: BB, target_sqs: BB) void {
-    var pieces = b.piece_bb(piece, b.ctm) & ~pin_sqs;
-    const opp = b.col_bb(b.ctm.opp()) & target_sqs;
+fn piece_attack(ml: *MoveList, comptime piece: Piece, comptime move_fn: fn (occ: BB, from: usize) BB, pin_sqs: BB, target_sqs: BB) void {
+    var pieces = ml.board.piece_bb(piece, ml.board.ctm) & ~pin_sqs;
+    const opp = ml.board.col_bb(ml.board.ctm.opp()) & target_sqs;
 
     while (pieces > 0) : (pieces &= pieces - 1) {
         const from: usize = @ctz(pieces);
-        const moves: BB = move_fn(b.all_bb(), from) & opp;
-        ml.add_caps(b, from, moves, piece.with_ctm(b.ctm), MoveType.CAP);
+        const moves: BB = move_fn(ml.board.all_bb(), from) & opp;
+        ml.add_caps(from, moves, piece.with_ctm(ml.board.ctm), MoveType.CAP);
     }
 }
 
@@ -434,48 +456,48 @@ pub inline fn pawn_att(sq: usize, ctm: Colour) BB {
     return pawn_attack_table[sq + (64 * @intFromEnum(ctm))];
 }
 
-fn king_castle(ml: *MoveList, b: *const Board) void {
-    const from: usize = @ctz(b.piece_bb(Piece.KING, b.ctm));
+fn king_castle(ml: *MoveList) void {
+    const from: usize = @ctz(ml.board.piece_bb(Piece.KING, ml.board.ctm));
 
     // if castle rights allow and no pieces are between king and rook
-    const shift: u6 = @intCast(@intFromEnum(b.ctm) * 56);
+    const shift: u6 = @intCast(@intFromEnum(ml.board.ctm) * 56);
     const kingside_mask: BB = @as(BB, 0x60) << shift;
-    if (b.can_kingside() and (b.all_bb() & kingside_mask) == 0) {
-        const mt = if (b.ctm == Colour.WHITE) MoveType.WKINGSIDE else MoveType.BKINGSIDE;
-        ml.append(Move.new(from, from + 2, Piece.KING.with_ctm(b.ctm), Piece.NONE, mt));
+    if (ml.board.can_kingside() and (ml.board.all_bb() & kingside_mask) == 0) {
+        const mt = if (ml.board.ctm == Colour.WHITE) MoveType.WKINGSIDE else MoveType.BKINGSIDE;
+        ml.append(Move.new(from, from + 2, Piece.KING.with_ctm(ml.board.ctm), Piece.NONE, mt));
     }
 
     const queenside_mask: BB = @as(BB, 0xE) << shift;
-    if (b.can_queenside() and (b.all_bb() & queenside_mask) == 0) {
-        const mt = if (b.ctm == Colour.WHITE) MoveType.WQUEENSIDE else MoveType.BQUEENSIDE;
-        ml.append(Move.new(from, from - 2, Piece.KING.with_ctm(b.ctm), Piece.NONE, mt));
+    if (ml.board.can_queenside() and (ml.board.all_bb() & queenside_mask) == 0) {
+        const mt = if (ml.board.ctm == Colour.WHITE) MoveType.WQUEENSIDE else MoveType.BQUEENSIDE;
+        ml.append(Move.new(from, from - 2, Piece.KING.with_ctm(ml.board.ctm), Piece.NONE, mt));
     }
 }
 
-fn gen_all_moves(ml: *MoveList, b: *const Board) void {
-    piece_attack(ml, b, Piece.QUEEN, queen_move_wrapper, NO_SQUARES, ALL_SQUARES);
-    piece_attack(ml, b, Piece.BISHOP, bishop_move_wrapper, NO_SQUARES, ALL_SQUARES);
-    piece_attack(ml, b, Piece.ROOK, rook_move_wrapper, NO_SQUARES, ALL_SQUARES);
-    piece_attack(ml, b, Piece.KNIGHT, knight_move_wrapper, NO_SQUARES, ALL_SQUARES);
-    piece_attack(ml, b, Piece.KING, king_move_wrapper, NO_SQUARES, ALL_SQUARES);
+fn gen_all_moves(ml: *MoveList) void {
+    piece_attack(ml, Piece.QUEEN, queen_move_wrapper, NO_SQUARES, ALL_SQUARES);
+    piece_attack(ml, Piece.BISHOP, bishop_move_wrapper, NO_SQUARES, ALL_SQUARES);
+    piece_attack(ml, Piece.ROOK, rook_move_wrapper, NO_SQUARES, ALL_SQUARES);
+    piece_attack(ml, Piece.KNIGHT, knight_move_wrapper, NO_SQUARES, ALL_SQUARES);
+    piece_attack(ml, Piece.KING, king_move_wrapper, NO_SQUARES, ALL_SQUARES);
 
-    piece_quiet(ml, b, Piece.QUEEN, queen_move_wrapper, NO_SQUARES, ALL_SQUARES);
-    piece_quiet(ml, b, Piece.BISHOP, bishop_move_wrapper, NO_SQUARES, ALL_SQUARES);
-    piece_quiet(ml, b, Piece.ROOK, rook_move_wrapper, NO_SQUARES, ALL_SQUARES);
-    piece_quiet(ml, b, Piece.KNIGHT, knight_move_wrapper, NO_SQUARES, ALL_SQUARES);
-    piece_quiet(ml, b, Piece.KING, king_move_wrapper, NO_SQUARES, ALL_SQUARES);
+    piece_quiet(ml, Piece.QUEEN, queen_move_wrapper, NO_SQUARES, ALL_SQUARES);
+    piece_quiet(ml, Piece.BISHOP, bishop_move_wrapper, NO_SQUARES, ALL_SQUARES);
+    piece_quiet(ml, Piece.ROOK, rook_move_wrapper, NO_SQUARES, ALL_SQUARES);
+    piece_quiet(ml, Piece.KNIGHT, knight_move_wrapper, NO_SQUARES, ALL_SQUARES);
+    piece_quiet(ml, Piece.KING, king_move_wrapper, NO_SQUARES, ALL_SQUARES);
 
-    if (b.ctm == Colour.WHITE) {
-        wpawn_attack(b, ml, NO_SQUARES, ALL_SQUARES);
-        wpawn_quiet(b, ml, NO_SQUARES, ALL_SQUARES);
-        wpawn_ep(b, ml, NO_SQUARES, ALL_SQUARES);
+    if (ml.board.ctm == Colour.WHITE) {
+        wpawn_attack(ml, NO_SQUARES, ALL_SQUARES);
+        wpawn_quiet(ml, NO_SQUARES, ALL_SQUARES);
+        wpawn_ep(ml, NO_SQUARES, ALL_SQUARES);
     } else {
-        bpawn_attack(b, ml, NO_SQUARES, ALL_SQUARES);
-        bpawn_quiet(b, ml, NO_SQUARES, ALL_SQUARES);
-        bpawn_ep(b, ml, NO_SQUARES, ALL_SQUARES);
+        bpawn_attack(ml, NO_SQUARES, ALL_SQUARES);
+        bpawn_quiet(ml, NO_SQUARES, ALL_SQUARES);
+        bpawn_ep(ml, NO_SQUARES, ALL_SQUARES);
     }
 
-    king_castle(ml, b);
+    king_castle(ml);
 }
 
 fn king_safe_target(b: *const Board, king_sq: usize) BB {
@@ -551,14 +573,14 @@ fn attacker_ray(b: *const Board, king_sq: usize, att_sq: usize) BB {
     }
 }
 
-fn gen_check_moves(ml: *MoveList, b: *const Board) void {
-    const king_sq: usize = @ctz(b.piece_bb(Piece.KING, b.ctm));
+fn gen_check_moves(ml: *MoveList) void {
+    const king_sq: usize = @ctz(ml.board.piece_bb(Piece.KING, ml.board.ctm));
 
-    const attackers = b.attackers_of_sq(king_sq, b.ctm.opp());
-    const safe_moves = king_safe_target(b, king_sq);
+    const attackers = ml.board.attackers_of_sq(king_sq, ml.board.ctm.opp());
+    const safe_moves = king_safe_target(ml.board, king_sq);
 
-    piece_quiet(ml, b, Piece.KING, king_move_wrapper, NO_SQUARES, safe_moves);
-    piece_attack(ml, b, Piece.KING, king_move_wrapper, NO_SQUARES, safe_moves);
+    piece_quiet(ml, Piece.KING, king_move_wrapper, NO_SQUARES, safe_moves);
+    piece_attack(ml, Piece.KING, king_move_wrapper, NO_SQUARES, safe_moves);
 
     // if there is more than one attacker there is nothing else to do
     if (attackers & (attackers - 1) > 0) {
@@ -566,54 +588,54 @@ fn gen_check_moves(ml: *MoveList, b: *const Board) void {
         return;
     }
 
-    const pinned = pinned_sqs(b, king_sq);
+    const pinned = pinned_sqs(ml.board, king_sq);
 
-    piece_attack(ml, b, Piece.QUEEN, queen_move_wrapper, pinned, attackers);
-    piece_attack(ml, b, Piece.BISHOP, bishop_move_wrapper, pinned, attackers);
-    piece_attack(ml, b, Piece.ROOK, rook_move_wrapper, pinned, attackers);
-    piece_attack(ml, b, Piece.KNIGHT, knight_move_wrapper, pinned, attackers);
+    piece_attack(ml, Piece.QUEEN, queen_move_wrapper, pinned, attackers);
+    piece_attack(ml, Piece.BISHOP, bishop_move_wrapper, pinned, attackers);
+    piece_attack(ml, Piece.ROOK, rook_move_wrapper, pinned, attackers);
+    piece_attack(ml, Piece.KNIGHT, knight_move_wrapper, pinned, attackers);
 
-    if (b.ctm == Colour.WHITE) {
-        wpawn_attack(b, ml, pinned, attackers);
-        wpawn_ep(b, ml, pinned, attackers);
+    if (ml.board.ctm == Colour.WHITE) {
+        wpawn_attack(ml, pinned, attackers);
+        wpawn_ep(ml, pinned, attackers);
     } else {
-        bpawn_attack(b, ml, pinned, attackers);
-        bpawn_ep(b, ml, pinned, attackers);
+        bpawn_attack(ml, pinned, attackers);
+        bpawn_ep(ml, pinned, attackers);
     }
 
     const att_sq: usize = @ctz(attackers);
     // if the attacker is not a sliding piece then no other quiet moves will
     // make any difference
-    const att_piece = b.get_piece(att_sq);
+    const att_piece = ml.board.get_piece(att_sq);
     if (!att_piece.is_slider()) {
         return;
     }
 
-    const att_ray = attacker_ray(b, king_sq, att_sq);
+    const att_ray = attacker_ray(ml.board, king_sq, att_sq);
 
-    piece_quiet(ml, b, Piece.QUEEN, queen_move_wrapper, pinned, att_ray);
-    piece_quiet(ml, b, Piece.BISHOP, bishop_move_wrapper, pinned, att_ray);
-    piece_quiet(ml, b, Piece.ROOK, rook_move_wrapper, pinned, att_ray);
-    piece_quiet(ml, b, Piece.KNIGHT, knight_move_wrapper, pinned, att_ray);
+    piece_quiet(ml, Piece.QUEEN, queen_move_wrapper, pinned, att_ray);
+    piece_quiet(ml, Piece.BISHOP, bishop_move_wrapper, pinned, att_ray);
+    piece_quiet(ml, Piece.ROOK, rook_move_wrapper, pinned, att_ray);
+    piece_quiet(ml, Piece.KNIGHT, knight_move_wrapper, pinned, att_ray);
 
-    if (b.ctm == Colour.WHITE) wpawn_quiet(b, ml, pinned, att_ray) else bpawn_quiet(b, ml, pinned, att_ray);
+    if (ml.board.ctm == Colour.WHITE) wpawn_quiet(ml, pinned, att_ray) else bpawn_quiet(ml, pinned, att_ray);
 }
 
-pub fn gen_moves(ml: *MoveList, b: *const Board, checked: bool) void {
-    if (checked) gen_check_moves(ml, b) else gen_all_moves(ml, b);
+pub fn gen_moves(ml: *MoveList, checked: bool) void {
+    if (checked) gen_check_moves(ml) else gen_all_moves(ml);
 }
 
-pub fn gen_q_moves(ml: *MoveList, b: *const Board) void {
-    piece_attack(ml, b, Piece.QUEEN, queen_move_wrapper, NO_SQUARES, ALL_SQUARES);
-    piece_attack(ml, b, Piece.BISHOP, bishop_move_wrapper, NO_SQUARES, ALL_SQUARES);
-    piece_attack(ml, b, Piece.ROOK, rook_move_wrapper, NO_SQUARES, ALL_SQUARES);
-    piece_attack(ml, b, Piece.KNIGHT, knight_move_wrapper, NO_SQUARES, ALL_SQUARES);
-    if (b.ctm == Colour.WHITE) {
-        wpawn_attack(b, ml, NO_SQUARES, ALL_SQUARES);
-        wpawn_ep(b, ml, NO_SQUARES, ALL_SQUARES);
+pub fn gen_q_moves(ml: *MoveList) void {
+    piece_attack(ml, Piece.QUEEN, queen_move_wrapper, NO_SQUARES, ALL_SQUARES);
+    piece_attack(ml, Piece.BISHOP, bishop_move_wrapper, NO_SQUARES, ALL_SQUARES);
+    piece_attack(ml, Piece.ROOK, rook_move_wrapper, NO_SQUARES, ALL_SQUARES);
+    piece_attack(ml, Piece.KNIGHT, knight_move_wrapper, NO_SQUARES, ALL_SQUARES);
+    if (ml.board.ctm == Colour.WHITE) {
+        wpawn_attack(ml, NO_SQUARES, ALL_SQUARES);
+        wpawn_ep(ml, NO_SQUARES, ALL_SQUARES);
     } else {
-        bpawn_attack(b, ml, NO_SQUARES, ALL_SQUARES);
-        bpawn_ep(b, ml, NO_SQUARES, ALL_SQUARES);
+        bpawn_attack(ml, NO_SQUARES, ALL_SQUARES);
+        bpawn_ep(ml, NO_SQUARES, ALL_SQUARES);
     }
 }
 
@@ -623,11 +645,31 @@ fn castle_is_legal(b: *const Board, comptime sq1: usize, comptime sq2: usize, co
     return can_sq1 and can_sq2;
 }
 
+const REP_SIZE: usize = 1 << 16;
+const REP_MASK: usize = REP_SIZE - 1;
+
+var repetitions: [REP_SIZE]usize = [_]usize{0} ** REP_SIZE;
+
+pub fn push_repetition(hash: u64) void {
+    repetitions[hash & REP_MASK] += 1;
+}
+
+pub fn pop_repetition(hash: u64) void {
+    std.debug.assert(repetitions[hash & REP_MASK] > 0);
+    repetitions[hash & REP_MASK] -= 1;
+}
+
+pub fn clear_repetitions() void {
+    for (0..REP_SIZE) |i| repetitions[i] = 0;
+}
+
+pub fn get_repetitions(hash: u64) usize {
+    return repetitions[hash & REP_MASK];
+}
+
 // assumes the move has already been applied to the board
 pub fn is_legal_move(b: *const Board, m: Move, checked: bool) bool {
-    if (b.halfmove > 100) {
-        return false;
-    }
+    if (b.halfmove > 100 or get_repetitions(b.hash) > 2) return false;
 
     // checked has legal move gen and no casling is required
     if (checked) {

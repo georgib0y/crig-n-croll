@@ -68,7 +68,7 @@ fn perft_hash(b: *const Board, depth: i32) i32 {
 
     const checked = b.is_in_check();
     var ml = movegen.MoveList.new(b);
-    movegen.gen_moves(&ml, b, checked);
+    movegen.gen_moves(&ml, checked);
 
     var mc: i32 = 0;
     var next: Board = undefined;

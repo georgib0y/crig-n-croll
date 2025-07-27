@@ -47,7 +47,11 @@ const EdpBestMove = struct {
     mt: EpdMoveType,
 };
 
-const EPD = struct { id: []const u8, pos: Board, bms: []const EdpBestMove };
+const EPD = struct {
+    id: []const u8,
+    pos: Board,
+    bms: []const EdpBestMove,
+};
 
 fn map_edp_piece(p: u8) ?Piece {
     return switch (p) {
@@ -119,7 +123,7 @@ fn parse_epd(allocator: std.mem.Allocator, str: []const u8) !EPD {
     };
 }
 
-fn epd_search(epd: EPD) !bool {
+fn epd_search(allocator: std.mem.Allocator, epd: EPD) !bool {
     std.log.debug("====== trying {s} ======", .{epd.id});
     epd.pos.log(std.log.debug);
     for (epd.bms) |bm| {
@@ -134,10 +138,15 @@ fn epd_search(epd: EPD) !bool {
         });
     }
 
-    var uci = UCI{ .board = epd.pos, .log_file = null };
+    var uci = try UCI.init(allocator, epd.pos, null);
+    defer uci.deinit(allocator);
 
-    const res = search.do_search(&uci, &epd.pos) catch {
-        std.log.debug("{s} position failed low!", .{epd.id});
+    const res = search.do_search(uci) catch |err| {
+        switch (err) {
+            error.NoResultFound => std.log.debug("{s} position failed low!", .{epd.id}),
+            else => std.log.debug("{s} unexpected error: {s}", .{ epd.id, @errorName(err) }),
+        }
+
         return false;
     };
 
@@ -163,6 +172,8 @@ fn usage_and_die() noreturn {
         \\zig build st -- <file.epd> [start test num] [end test num]
         \\	or
         \\zig build st -- pos '<epd line>'
+        \\
+        \\ hint -- [test num] is 0 indexed
     ;
 
     std.log.err("{s}", .{usage});
@@ -182,7 +193,7 @@ pub fn main() !void {
 
     if (std.mem.eql(u8, filename, "pos")) {
         const epd = try parse_epd(allocator, args.next() orelse usage_and_die());
-        const passed = try epd_search(epd);
+        const passed = try epd_search(allocator, epd);
         std.log.info("{s} {s}", .{ epd.id, if (passed) "passed" else "failed" });
         return;
     }
@@ -205,14 +216,14 @@ pub fn main() !void {
             count += 1;
             continue;
         }
-        if (end) |e| if (count > e) break;
-
         const epd = try parse_epd(allocator, line);
-        const passed = try epd_search(epd);
+        const passed = try epd_search(allocator, epd);
         if (passed) passed_count += 1 else failed_count += 1;
         std.log.info("{s} {s}", .{ epd.id, if (passed) "passed" else "failed" });
 
         tt.clear();
+
+        if (end) |e| if (count >= e) break;
         count += 1;
     }
 

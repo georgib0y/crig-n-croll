@@ -70,6 +70,14 @@ pub const Piece = enum(u4) {
         return @enumFromInt(self.idx(c));
     }
 
+    pub fn colour_pieces(c: Colour) [6]Piece {
+        if (c == .WHITE) {
+            return .{ .PAWN, .KNIGHT, .ROOK, .BISHOP, .QUEEN, .KING };
+        } else {
+            return .{ .PAWN_B, .KNIGHT_B, .ROOK_B, .BISHOP_B, .QUEEN_B, .KING_B };
+        }
+    }
+
     pub fn pieces() [12]Piece {
         var p: [12]Piece = undefined;
         for (0..12) |i| {
@@ -78,14 +86,14 @@ pub const Piece = enum(u4) {
         return p;
     }
 
-    fn is_rook_like(self: Piece) bool {
+    pub fn is_rook_like(self: Piece) bool {
         return switch (self) {
             .ROOK, .ROOK_B, .QUEEN, .QUEEN_B => true,
             else => false,
         };
     }
 
-    fn is_bishop_like(self: Piece) bool {
+    pub fn is_bishop_like(self: Piece) bool {
         return switch (self) {
             .BISHOP, .BISHOP_B, .QUEEN, .QUEEN_B => true,
             else => false,
@@ -204,6 +212,11 @@ pub const Board = struct {
         }
 
         return Piece.NONE;
+    }
+
+    // TODO 10 is just a wild guess
+    pub fn is_in_endgame(self: *const Board) bool {
+        return self.phase <= 10;
     }
 
     // pub fn _get_piece(self: *const Board, sq: usize) Piece {}
@@ -344,7 +357,19 @@ pub const Board = struct {
         }
     }
 
+    pub fn make_null(self: *Board) void {
+        self.ctm = self.ctm.opp();
+        self.halfmove += 1;
+    }
+
+    pub fn unmake_null(self: *Board) void {
+        self.ctm = self.ctm.opp();
+        self.halfmove -= 1;
+    }
+
     pub fn copy_make(self: *const Board, dest: *Board, m: Move) void {
+        // cannot copy into itself
+        std.debug.assert(self != dest);
         dest.* = self.*;
 
         const from: usize = @intCast(m.from);

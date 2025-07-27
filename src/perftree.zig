@@ -14,7 +14,7 @@ fn perftree(b: *Board, depth: usize) usize {
 
     var ml = movegen.MoveList.new(b);
     const checked = b.is_in_check();
-    movegen.gen_moves(&ml, b, checked);
+    movegen.gen_moves(&ml, checked);
 
     var next: Board = undefined;
     while (ml.next()) |m| {
@@ -35,7 +35,7 @@ fn perftree_root(w: anytype, b: *Board, depth: usize) !void {
 
     var ml = movegen.MoveList.new(b);
     const checked = b.is_in_check();
-    movegen.gen_moves(&ml, b, checked);
+    movegen.gen_moves(&ml, checked);
 
     var next: Board = undefined;
     while (ml.next()) |m| {

@@ -1,4 +1,5 @@
 const std = @import("std");
+const File = std.fs.File;
 const board = @import("board.zig");
 const Board = board.Board;
 const tt = @import("tt.zig");
@@ -25,6 +26,32 @@ const UciCommand = enum(usize) {
 pub const UCI = struct {
     board: Board,
     log_file: ?std.fs.File,
+    generic_writer: std.io.GenericWriter(*UCI, anyerror, writeFn),
+
+    pub fn init(allocator: std.mem.Allocator, b: Board, log_file: ?std.fs.File) !*UCI {
+        var uci = try allocator.create(UCI);
+        uci.board = b;
+        uci.log_file = log_file;
+        uci.generic_writer = std.io.GenericWriter(*UCI, anyerror, writeFn){ .context = uci };
+        return uci;
+    }
+
+    pub fn deinit(self: *UCI, allocator: std.mem.Allocator) void {
+        allocator.destroy(self);
+    }
+
+    fn writeFn(self: *UCI, bytes: []const u8) !usize {
+        try std.io.getStdOut().writeAll(bytes);
+        if (self.log_file) |file| {
+            _ = try file.writeAll(bytes);
+        }
+
+        return bytes.len;
+    }
+
+    pub fn writer(self: *UCI) std.io.AnyWriter {
+        return self.generic_writer.any();
+    }
 
     fn log_uci_in(self: *UCI, input: []const u8) !void {
         std.log.debug("[INPUT] {s}", .{input});
@@ -38,16 +65,26 @@ pub const UCI = struct {
         std.log.err(format, args);
 
         if (self.log_file) |file| {
+            std.log.debug("log file is not null in log uci error", .{});
             try std.fmt.format(file.writer(), "[ERROR] " ++ format ++ "\n", args);
         }
     }
 
-    pub fn send_uci_command(self: *UCI, comptime format: []const u8, args: anytype) !void {
-        try std.fmt.format(std.io.getStdOut().writer(), format, args);
+    pub fn send_info(self: *UCI, res: search.SearchResult, timer: *std.time.Timer, nodes: usize, depth: usize) !void {
+        const w = self.writer();
+        try std.fmt.format(w, "info depth {d} ", .{depth});
 
-        if (self.log_file) |file| {
-            try std.fmt.format(file.writer(), "[OUTPUT] " ++ format, args);
+        if (mate_from_score(res.score)) |mate| {
+            try std.fmt.format(w, "score mate {d} ", .{mate});
+        } else {
+            try std.fmt.format(w, "score cp {d} ", .{res.score});
         }
+
+        const t_ns = timer.read();
+        const t_ms = t_ns / std.time.ns_per_ms;
+        try std.fmt.format(w, "time {d} nodes {d} nps {d} pv ", .{ t_ms, nodes, nps(t_ns, nodes) });
+        try tt.write_pv(w, &self.board, depth);
+        try w.writeByte('\n');
     }
 
     // TODO seems like there are a lack of free's in this
@@ -80,16 +117,16 @@ pub const UCI = struct {
     }
 
     fn handle_uci(self: *UCI) !void {
-        return self.send_uci_command("id name {s}\nid author {s}\nuciok\n", .{ BOT_NAME, AUTHOR });
+        return std.fmt.format(self.writer(), "id name {s}\nid author {s}\nuciok\n", .{ BOT_NAME, AUTHOR });
     }
 
     fn handle_isready(self: *UCI) !void {
-        return self.send_uci_command("readyok\n", .{});
+        return std.fmt.format(self.writer(), "readyok\n", .{});
     }
 
     fn handle_ucinewgame(self: *UCI) void {
         self.board = board.default_board();
-        // TODO maybe redundant?
+        movegen.clear_repetitions();
         tt.clear();
     }
 
@@ -102,34 +139,10 @@ pub const UCI = struct {
             break :pos try board.board_from_fen(input[fen_start..fen_end]);
         };
         defer self.board = pos;
+        movegen.push_repetition(pos.hash);
 
         const moves_start = (std.mem.indexOf(u8, input, " moves ") orelse return) + " moves ".len;
         pos = try process_moves(pos, input[moves_start..]);
-    }
-
-    pub fn send_info(uci: *UCI, res: search.SearchResult, timer: *std.time.Timer, nodes: usize, depth: usize) !void {
-        var move_buf: [8]u8 = undefined;
-        var move_fbs = std.io.fixedBufferStream(&move_buf);
-        try res.move.as_uci_str(move_fbs.writer());
-
-        var score_buf: [20]u8 = undefined;
-        var score_fbs = std.io.fixedBufferStream(&score_buf);
-        if (mate_from_score(res.score)) |mate| {
-            try std.fmt.format(score_fbs.writer(), "score mate {d}", .{mate});
-        } else {
-            try std.fmt.format(score_fbs.writer(), "score cp {d}", .{res.score});
-        }
-
-        const t_ns = timer.read();
-        const t_ms = t_ns / std.time.ns_per_ms;
-        try uci.send_uci_command("info depth {d} {s} time {d} nodes {d} nps {d} pv {s}\n", .{
-            depth,
-            score_fbs.getWritten(),
-            t_ms,
-            nodes,
-            nps(t_ns, nodes),
-            move_fbs.getWritten(),
-        });
     }
 
     fn handle_go(self: *UCI, input: []const u8) !void {
@@ -142,13 +155,12 @@ pub const UCI = struct {
         // the cost of performance
         tt.clear();
 
-        const res = try search.do_search(self, &self.board);
+        const res = try search.do_search(self);
 
-        var buf: [8]u8 = undefined;
-        var fbs = std.io.fixedBufferStream(&buf);
-        try res.move.as_uci_str(fbs.writer());
-
-        try self.send_uci_command("bestmove {s}\n", .{fbs.getWritten()});
+        const w = self.writer();
+        _ = try w.write("bestmove ");
+        try res.move.as_uci_str(w);
+        _ = try w.write("\n");
     }
 };
 
@@ -191,6 +203,7 @@ pub fn process_moves(b: Board, move_str: []const u8) !Board {
         var next: Board = undefined;
         curr.copy_make(&next, m);
         curr = next;
+        movegen.push_repetition(curr.hash);
     }
 
     return curr;

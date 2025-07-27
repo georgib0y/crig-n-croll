@@ -56,8 +56,8 @@ pub fn hash_board(b: *const Board) u64 {
     return hash;
 }
 
-pub const TT_SIZE = 1 << 20;
-pub const TT_MASK = TT_SIZE - 1;
+pub const TT_SIZE: usize = 1 << 20;
+pub const TT_MASK: usize = TT_SIZE - 1;
 
 pub const ScoreType = enum { PV, Alpha, Beta };
 
@@ -67,9 +67,7 @@ pub const TTEntry = struct { hash: u64, score: i32, score_type: ScoreType, depth
 var tt_data: [TT_SIZE]?TTEntry = [_]?TTEntry{null} ** TT_SIZE;
 
 pub fn clear() void {
-    for (0..TT_SIZE) |i| {
-        tt_data[i] = null;
-    }
+    @memset(&tt_data, null);
 }
 
 pub fn exists(hash: u64) bool {
@@ -81,6 +79,15 @@ pub fn get_best_move(hash: u64) ?Move {
     const e = tt_data[hash & TT_MASK] orelse return null;
     if (e.hash != hash) return null;
     return e.best_move;
+}
+
+pub fn get_pv_move(hash: u64) ?Move {
+    const e = tt_data[hash & TT_MASK] orelse return null;
+    if (e.hash != hash) return null;
+    return switch (e.score_type) {
+        .PV => e.best_move,
+        else => null,
+    };
 }
 
 fn adjust_in(score: i32, ply: i32) i32 {
@@ -119,7 +126,7 @@ pub fn get_score(hash: u64, alpha: i32, beta: i32, depth: i32, ply: i32) ?i32 {
     const e = tt_data[hash & TT_MASK] orelse return null;
     if (e.hash != hash or e.depth < depth) return null;
 
-    // TODO returning alpha/beta or e.score?
+    // TODO returning alpha/beta or e.score in a fail?
     return switch (e.score_type) {
         .PV => adjust_out(e.score, ply),
         .Alpha => if (alpha < e.score) adjust_out(alpha, ply) else null,
@@ -127,7 +134,39 @@ pub fn get_score(hash: u64, alpha: i32, beta: i32, depth: i32, ply: i32) ?i32 {
     };
 }
 
-// TODO storing checkmates?
 pub fn set_entry(hash: u64, score: i32, score_type: ScoreType, depth: i32, ply: i32, best_move: ?Move) void {
-    tt_data[hash & TT_MASK] = TTEntry{ .hash = hash, .score = adjust_in(score, ply), .score_type = score_type, .depth = depth, .best_move = best_move };
+    const existing = tt_data[hash & TT_MASK];
+    if (existing) |e| if (e.depth > depth) return;
+
+    tt_data[hash & TT_MASK] = TTEntry{
+        .hash = hash,
+        .score = adjust_in(score, ply),
+        .score_type = score_type,
+        .depth = depth,
+        .best_move = best_move,
+    };
+}
+
+pub fn write_pv(w: anytype, start: *const Board, depth: usize) !void {
+    var len: usize = 0;
+    var b = start.*;
+    var tmp: Board = undefined;
+    while (get_pv_move(b.hash)) |pv| {
+        // TODO avoid circular pv references - especially for shallow depths
+        // this is probably the root of larger issues.
+        if (len >= depth) {
+            return;
+        }
+        try pv.as_uci_str(w);
+        // TODO trailing space could be an issue with uci
+        _ = try w.write(" ");
+
+        // const entry = tt_data[b.hash & TT_MASK] orelse unreachable;
+        // try pv.display(w);
+        // try std.fmt.format(w, "depth {d}\n", .{entry.depth});
+
+        b.copy_make(&tmp, pv);
+        b = tmp;
+        len += 1;
+    }
 }
