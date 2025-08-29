@@ -163,21 +163,23 @@ pub const MoveList = struct {
     idx: usize,
     count: usize,
     board: *const Board,
+    pv_move: ?Move,
     tt_bestmove: ?Move,
 
-    pub fn new(b: *const Board) MoveList {
+    pub fn new(b: *const Board, pv_move: ?Move) MoveList {
         return MoveList{
             .moves = undefined,
             .scores = undefined,
             .idx = 0,
             .count = 0,
             .board = b,
+            .pv_move = pv_move,
             .tt_bestmove = tt.get_best_move(b.hash),
         };
     }
 
     fn append(self: *MoveList, m: Move) void {
-        self.scores[self.count] = eval.score_move(m, self.board, self.tt_bestmove);
+        self.scores[self.count] = eval.score_move(m, self.board, self.pv_move, self.tt_bestmove);
         self.moves[self.count] = m;
         self.count += 1;
     }

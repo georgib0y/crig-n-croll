@@ -3,6 +3,7 @@ const File = std.fs.File;
 const board = @import("board.zig");
 const Board = board.Board;
 const tt = @import("tt.zig");
+const PV = tt.PV;
 const search = @import("search.zig");
 const movegen = @import("movegen.zig");
 const eval = @import("eval.zig");
@@ -70,7 +71,7 @@ pub const UCI = struct {
         }
     }
 
-    pub fn send_info(self: *UCI, res: search.SearchResult, timer: *std.time.Timer, nodes: usize, depth: usize) !void {
+    pub fn send_info(self: *UCI, res: search.SearchResult, pv: *const PV, timer: *std.time.Timer, nodes: usize, depth: usize) !void {
         const w = self.writer();
         try std.fmt.format(w, "info depth {d} ", .{depth});
 
@@ -83,7 +84,7 @@ pub const UCI = struct {
         const t_ns = timer.read();
         const t_ms = t_ns / std.time.ns_per_ms;
         try std.fmt.format(w, "time {d} nodes {d} nps {d} pv ", .{ t_ms, nodes, nps(t_ns, nodes) });
-        try tt.write_pv(w, &self.board, depth);
+        try pv.write_pv(w);
         try w.writeByte('\n');
     }
 
@@ -172,6 +173,7 @@ fn nps(time_ns: u64, nodes: usize) f64 {
 // returns mate in however many moves (not plies), negative if mated
 // null if score isn't a mate score
 fn mate_from_score(score: i32) ?i32 {
+    std.log.debug("getting mate from score {d}", .{score});
     if (score >= eval.CHECKMATE - search.MAX_DEPTH) {
         // +3 to the depth: +1 as all checkmates are odd, +2 to make the moves non-zero indexed
         return @divFloor(eval.CHECKMATE - score + 3, 2);

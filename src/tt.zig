@@ -90,12 +90,22 @@ pub fn get_pv_move(hash: u64) ?Move {
     };
 }
 
+// TODO adjustments might mean that stored checks are outside these bounds
+const MIN_MATE = eval.CHECKMATE - search.MAX_DEPTH;
+const MAX_MATED = -eval.CHECKMATE + search.MAX_DEPTH;
+
 fn adjust_in(score: i32, ply: i32) i32 {
-    if (score >= eval.CHECKMATE - search.MAX_DEPTH) {
+    if (score == -eval.INF or score == eval.INF) return score;
+    // if (!(-eval.CHECKMATE - search.MAX_DEPTH <= score and score <= eval.CHECKMATE + search.MAX_DEPTH)) {
+    //     std.log.debug("{d}", .{score});
+    //     std.debug.assert(false);
+    // }
+
+    if (score >= MIN_MATE) {
         return score + ply;
     }
 
-    if (score <= -eval.CHECKMATE + search.MAX_DEPTH) {
+    if (score <= MAX_MATED) {
         return score - ply;
     }
 
@@ -103,11 +113,13 @@ fn adjust_in(score: i32, ply: i32) i32 {
 }
 
 fn adjust_out(score: i32, ply: i32) i32 {
-    if (score >= eval.CHECKMATE - search.MAX_DEPTH) {
+    if (score == -eval.INF or score == eval.INF) return score;
+
+    if (score >= MIN_MATE) {
         return score - ply;
     }
 
-    if (score <= -eval.CHECKMATE + search.MAX_DEPTH) {
+    if (score <= MAX_MATED) {
         return score + ply;
     }
 
@@ -129,12 +141,14 @@ pub fn get_score(hash: u64, alpha: i32, beta: i32, depth: i32, ply: i32) ?i32 {
     // TODO returning alpha/beta or e.score in a fail?
     return switch (e.score_type) {
         .PV => adjust_out(e.score, ply),
-        .Alpha => if (alpha < e.score) adjust_out(alpha, ply) else null,
-        .Beta => if (beta >= e.score) adjust_out(beta, ply) else null,
+        .Alpha => if (alpha < e.score) adjust_out(e.score, ply) else null,
+        .Beta => if (beta >= e.score) adjust_out(e.score, ply) else null,
     };
 }
 
 pub fn set_entry(hash: u64, score: i32, score_type: ScoreType, depth: i32, ply: i32, best_move: ?Move) void {
+    // if (score < -eval.INF + search.MAX_DEPTH or score > eval.CHECKMATE - search.MAX_DEPTH) return;
+
     const existing = tt_data[hash & TT_MASK];
     if (existing) |e| if (e.depth > depth) return;
 
@@ -147,26 +161,32 @@ pub fn set_entry(hash: u64, score: i32, score_type: ScoreType, depth: i32, ply: 
     };
 }
 
-pub fn write_pv(w: anytype, start: *const Board, depth: usize) !void {
-    var len: usize = 0;
-    var b = start.*;
-    var tmp: Board = undefined;
-    while (get_pv_move(b.hash)) |pv| {
-        // TODO avoid circular pv references - especially for shallow depths
-        // this is probably the root of larger issues.
-        if (len >= depth) {
-            return;
-        }
-        try pv.as_uci_str(w);
-        // TODO trailing space could be an issue with uci
-        _ = try w.write(" ");
+pub const PV = struct {
+    moves: [search.MAX_DEPTH]Move,
+    len: usize,
 
-        // const entry = tt_data[b.hash & TT_MASK] orelse unreachable;
-        // try pv.display(w);
-        // try std.fmt.format(w, "depth {d}\n", .{entry.depth});
-
-        b.copy_make(&tmp, pv);
-        b = tmp;
-        len += 1;
+    pub fn init() PV {
+        return PV{ .moves = undefined, .len = 0 };
     }
-}
+
+    pub fn set(self: *PV, move: Move, rest: *const PV) void {
+        std.debug.assert(rest.len + 1 < search.MAX_DEPTH);
+        self.moves[0] = move;
+        std.mem.copyForwards(Move, self.moves[1..], rest.moves[0..rest.len]);
+        self.len = 1 + rest.len;
+    }
+
+    pub fn get_move(self: *const PV, start_depth: i32, depth: i32) ?Move {
+        const idx: usize = @intCast(start_depth - depth);
+        if (idx >= self.len) return null;
+        return self.moves[idx];
+    }
+
+    pub fn write_pv(self: *const PV, w: anytype) !void {
+        for (self.moves[0..self.len]) |pv| {
+            try pv.as_uci_str(w);
+            // TODO trailing space could be an issue with uci
+            _ = try w.write(" ");
+        }
+    }
+};
