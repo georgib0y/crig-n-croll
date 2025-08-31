@@ -1,4 +1,6 @@
 const std = @import("std");
+const Instant = std.time.Instant;
+
 const board = @import("board.zig");
 const Board = board.Board;
 const movegen = @import("movegen.zig");
@@ -15,23 +17,27 @@ pub const SearchResult = struct {
     move: Move,
 };
 
-var timer: std.time.Timer = undefined;
+var started: Instant = undefined;
 var nodes: usize = 0;
 var qnodes: usize = 0;
 var start_depth: i32 = 0;
 
 fn is_out_of_time() bool {
     // TODO check this optimisation - when to read timer
-    return 0xFFF & (nodes + qnodes) == 0 and timer.read() / std.time.ns_per_ms > TIMEOUT_MS;
+    if (0xFFF & (nodes + qnodes) == 0) {
+        const now = Instant.now() catch return true;
+        return now.since(started) / std.time.ns_per_ms > TIMEOUT_MS;
+    }
+    return false;
 }
 
-pub fn do_search(uci: *UCI) !SearchResult {
+pub fn do_search(comptime W: type, uci: *UCI(W)) !SearchResult {
     nodes = 0;
-    timer = try std.time.Timer.start();
-    return iterative_deepening(uci);
+    started = try std.time.Instant.now();
+    return iterative_deepening(W, uci);
 }
 
-fn iterative_deepening(uci: *UCI) !SearchResult {
+fn iterative_deepening(comptime W: type, uci: *UCI(W)) !SearchResult {
     var res: ?SearchResult = null;
 
     for (1..MAX_DEPTH) |depth| {
@@ -48,7 +54,7 @@ fn iterative_deepening(uci: *UCI) !SearchResult {
             }
         };
 
-        try uci.send_info(res.?, &timer, nodes, depth);
+        try uci.send_info(res.?, started, nodes, depth);
     }
 
     return res orelse error.NoResultFound;
