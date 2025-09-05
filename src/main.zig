@@ -1,8 +1,9 @@
 const std = @import("std");
 const board = @import("board.zig");
 const UCI = @import("uci.zig").UCI;
+const ZigTimer = @import("timer.zig").ZigTimer;
 
-pub const std_options = .{ .log_level = std.log.Level.debug };
+// pub const std_options = .{ .log_level = std.log.Level.debug };
 
 fn new_log_file() !std.fs.File {
     const logdir = try std.fs.cwd().openDir("logs", .{});
@@ -19,7 +20,8 @@ pub fn main() !void {
     const allocator = arena.allocator();
 
     const log_file = try new_log_file();
-    var game = try UCI.init(allocator, board.default_board(), log_file);
+    const stdout = std.io.getStdOut().writer().any();
+    var game = try UCI.init(allocator, board.default_board(), stdout, log_file);
 
     try game.run();
 }

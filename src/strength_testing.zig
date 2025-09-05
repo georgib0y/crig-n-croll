@@ -8,8 +8,10 @@ const util = @import("util.zig");
 const search = @import("search.zig");
 const tt = @import("tt.zig");
 const UCI = @import("uci.zig").UCI;
+// const ZigTimer = @import("timer.zig").ZigTimer;
+const Timer = @import("timer.zig").Timer;
 
-pub const std_options = .{ .log_level = std.log.Level.debug };
+// const std_options: std.Options = std.Options{ .log_level = std.log.Level.debug };
 
 const EpdMoveType = enum {
     Quiet,
@@ -138,7 +140,8 @@ fn epd_search(allocator: std.mem.Allocator, epd: EPD) !bool {
         });
     }
 
-    var uci = try UCI.init(allocator, epd.pos, null);
+    const stdout = std.io.getStdOut().writer().any();
+    var uci = try UCI.init(allocator, epd.pos, stdout, null);
     defer uci.deinit(allocator);
 
     const res = search.do_search(uci) catch |err| {
@@ -170,7 +173,7 @@ fn usage_and_die() noreturn {
     const usage =
         \\Usage is either:
         \\zig build st -- <file.epd> [start test num] [end test num]
-        \\	or
+        \\\tor
         \\zig build st -- pos '<epd line>'
         \\
         \\ hint -- [test num] is 0 indexed

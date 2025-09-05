@@ -7,6 +7,7 @@ const search = @import("search.zig");
 const movegen = @import("movegen.zig");
 const Move = movegen.Move;
 const eval = @import("eval.zig");
+const Timer = @import("timer.zig").Timer;
 
 const BOT_NAME = "crig";
 const AUTHOR = "George Bull";
@@ -24,154 +25,164 @@ const UciCommand = enum(usize) {
     quit,
 };
 
-pub fn UCI(comptime W: type) type {
-    return struct {
-        board: Board,
-        last_best_move: ?Move,
+pub const UCI = struct {
+    board: Board,
+    last_best_move: ?Move,
+    stdout_writer: std.io.AnyWriter,
+    log_file: ?std.fs.File,
+    buf_writer: std.io.BufferedWriter(4096, std.io.GenericWriter(*UCI, anyerror, write)),
+
+    pub fn init(
+        allocator: std.mem.Allocator,
+        b: Board,
+        stdout_writer: std.io.AnyWriter,
         log_file: ?std.fs.File,
-        out: W,
-        _generic_writer: std.io.GenericWriter(*UCI(W), anyerror, writeFn),
+    ) !*UCI {
+        const uci = try allocator.create(UCI);
+        uci.* = .{
+            .board = b,
+            .last_best_move = null,
+            .stdout_writer = stdout_writer,
+            .log_file = log_file,
+            .buf_writer = std.io.bufferedWriter(
+                std.io.GenericWriter(*UCI, anyerror, write){ .context = uci },
+            ),
+        };
 
-        pub fn init(allocator: std.mem.Allocator, b: Board, out: W, log_file: ?std.fs.File) !*UCI(W) {
-            var uci = try allocator.create(UCI(W));
-            uci.board = b;
-            uci.log_file = log_file;
-            uci.out = out;
-            uci.last_best_move = null;
-            uci._generic_writer = std.io.GenericWriter(*UCI(W), anyerror, writeFn){ .context = uci };
-            return uci;
+        return uci;
+    }
+
+    pub fn deinit(self: *UCI, allocator: std.mem.Allocator) void {
+        allocator.destroy(self);
+    }
+
+    fn write(self: *UCI, bytes: []const u8) !usize {
+        try self.stdout_writer.writeAll(bytes);
+        if (self.log_file) |file| {
+            _ = try file.writeAll(bytes);
         }
 
-        pub fn deinit(self: *UCI(W), allocator: std.mem.Allocator) void {
-            allocator.destroy(self);
+        return bytes.len;
+    }
+
+    fn log_uci_in(self: *UCI, input: []const u8) !void {
+        std.log.debug("[INPUT] {s}", .{input});
+        if (self.log_file) |file| {
+            try std.fmt.format(file.writer(), "[INPUT]  {s}\n", .{input});
+        }
+    }
+
+    // TODO send_uci_error
+    pub fn log_uci_error(self: *UCI, comptime format: []const u8, args: anytype) !void {
+        std.log.err(format, args);
+
+        if (self.log_file) |file| {
+            std.log.debug("log file is not null in log uci error", .{});
+            try std.fmt.format(file.writer(), "[ERROR] " ++ format ++ "\n", args);
+        }
+    }
+
+    pub fn send_info(self: *UCI, res: search.SearchResult, timer: *Timer(), nodes: usize, depth: usize) !void {
+        const w = self.buf_writer.writer();
+        try std.fmt.format(w, "info depth {d} ", .{depth});
+
+        if (mate_from_score(res.score)) |mate| {
+            try std.fmt.format(w, "score mate {d} ", .{mate});
+        } else {
+            try std.fmt.format(w, "score cp {d} ", .{res.score});
         }
 
-        fn writeFn(self: *UCI(W), bytes: []const u8) !usize {
-            try self.out.writeAll(bytes);
-            if (self.log_file) |file| {
-                _ = try file.writeAll(bytes);
-            }
+        const t_ns = try timer.elapsed_ns();
+        const t_ms = t_ns / std.time.ns_per_ms;
+        try std.fmt.format(w, "time {d} nodes {d} nps {d} pv ", .{ t_ms, nodes, nps(t_ns, nodes) });
+        try tt.write_pv(w, &self.board, depth);
+        try w.writeByte('\n');
+        return self.buf_writer.flush();
+    }
 
-            return bytes.len;
-        }
+    // TODO seems like there are a lack of free's in this
+    pub fn run(self: *UCI) !void {
+        var in = std.io.getStdIn().reader();
+        var buf: [4096]u8 = undefined;
+        // TODO can this run in another thread?
+        while (try in.readUntilDelimiterOrEof(&buf, '\n')) |line| {
+            // TODO maybe trim other chars? (\r?)
+            const input = std.mem.trim(u8, line, " \n");
+            try self.log_uci_in(input);
 
-        pub fn writer(self: *UCI(W)) std.io.AnyWriter {
-            return self._generic_writer.any();
-        }
-
-        fn log_uci_in(self: *UCI(W), input: []const u8) !void {
-            std.log.debug("[INPUT] {s}", .{input});
-            if (self.log_file) |file| {
-                try std.fmt.format(file.writer(), "[INPUT]  {s}\n", .{input});
-            }
-        }
-
-        // TODO send_uci_error
-        pub fn log_uci_error(self: *UCI(W), comptime format: []const u8, args: anytype) !void {
-            std.log.err(format, args);
-
-            if (self.log_file) |file| {
-                std.log.debug("log file is not null in log uci error", .{});
-                try std.fmt.format(file.writer(), "[ERROR] " ++ format ++ "\n", args);
-            }
-        }
-
-        pub fn send_info(self: *UCI(W), res: search.SearchResult, started: std.time.Instant, nodes: usize, depth: usize) !void {
-            const w = self.writer();
-            try std.fmt.format(w, "info depth {d} ", .{depth});
-
-            if (mate_from_score(res.score)) |mate| {
-                try std.fmt.format(w, "score mate {d} ", .{mate});
-            } else {
-                try std.fmt.format(w, "score cp {d} ", .{res.score});
-            }
-
-            const now = try std.time.Instant.now();
-            const t_ns = now.since(started);
-            const t_ms = t_ns / std.time.ns_per_ms;
-            try std.fmt.format(w, "time {d} nodes {d} nps {d} pv ", .{ t_ms, nodes, nps(t_ns, nodes) });
-            try tt.write_pv(w, &self.board, depth);
-            try w.writeByte('\n');
-        }
-
-        // TODO seems like there are a lack of free's in this
-        pub fn run(self: *UCI(W)) !void {
-            var in = std.io.getStdIn().reader();
-            var buf: [4096]u8 = undefined;
-            // TODO can this run in another thread?
-            while (try in.readUntilDelimiterOrEof(&buf, '\n')) |line| {
-                // TODO maybe trim other chars? (\r?)
-                const input = std.mem.trim(u8, line, " \n");
-                try self.log_uci_in(input);
-
-                const cmd = get_uci_command(input) catch {
-                    try self.log_uci_error("Unknown command: '{s}'", .{input});
-                    continue;
-                };
-
-                switch (cmd) {
-                    .uci => try self.handle_uci(),
-                    .isready => try self.handle_isready(),
-                    .ucinewgame => self.handle_ucinewgame(),
-                    .position => self.handle_position(input) catch |err| {
-                        try self.log_uci_error("Invalid position command '{s}': {s}", .{ input, @errorName(err) });
-                        continue;
-                    },
-                    .go => try self.handle_go(input),
-                    .quit => break,
-                }
-            }
-        }
-
-        fn handle_uci(self: *UCI(W)) !void {
-            return std.fmt.format(self.writer(), "id name {s}\nid author {s}\nuciok\n", .{ BOT_NAME, AUTHOR });
-        }
-
-        fn handle_isready(self: *UCI(W)) !void {
-            return std.fmt.format(self.writer(), "readyok\n", .{});
-        }
-
-        pub fn handle_ucinewgame(self: *UCI(W)) void {
-            self.board = board.default_board();
-            movegen.clear_repetitions();
-            tt.clear();
-        }
-
-        pub fn handle_position(self: *UCI(W), input: []const u8) !void {
-            var pos: Board = pos: {
-                if (std.mem.startsWith(u8, input, "position startpos")) break :pos board.default_board();
-                if (!std.mem.startsWith(u8, input, "position fen")) return error.InvalidPositionCommand;
-                const fen_start = "position fen".len;
-                const fen_end = std.mem.indexOf(u8, input, " moves") orelse input.len;
-                break :pos try board.board_from_fen(input[fen_start..fen_end]);
+            const cmd = get_uci_command(input) catch {
+                try self.log_uci_error("Unknown command: '{s}'", .{input});
+                continue;
             };
-            defer self.board = pos;
-            movegen.push_repetition(pos.hash);
 
-            const moves_start = (std.mem.indexOf(u8, input, " moves ") orelse return) + " moves ".len;
-            pos = try process_moves(pos, input[moves_start..]);
+            switch (cmd) {
+                .uci => try self.handle_uci(),
+                .isready => try self.handle_isready(),
+                .ucinewgame => self.handle_ucinewgame(),
+                .position => self.handle_position(input) catch |err| {
+                    try self.log_uci_error("Invalid position command '{s}': {s}", .{ input, @errorName(err) });
+                    continue;
+                },
+                .go => try self.handle_go(input),
+                .quit => break,
+            }
         }
+    }
 
-        pub fn handle_go(self: *UCI(W), input: []const u8) !void {
-            //TODO handle options
-            _ = input;
+    fn handle_uci(self: *UCI) !void {
+        try std.fmt.format(
+            self.buf_writer.writer(),
+            "id name {s}\nid author {s}\nuciok\n",
+            .{ BOT_NAME, AUTHOR },
+        );
+        return self.buf_writer.flush();
+    }
 
-            // highly likley that there a many positions from the last
-            // search that had incomplete bounds when the timer cut off
-            // the search, clearing this increases the seach stablilty at
-            // the cost of performance
-            tt.clear();
+    fn handle_isready(self: *UCI) !void {
+        try std.fmt.format(self.buf_writer.writer(), "readyok\n", .{});
+        return self.buf_writer.flush();
+    }
 
-            const res = try search.do_search(W, self);
-            self.last_best_move = res.move;
+    pub fn handle_ucinewgame(self: *UCI) void {
+        self.board = board.default_board();
+        movegen.clear_repetitions();
+        tt.clear();
+    }
 
-            const w = self.writer();
-            _ = try w.write("bestmove ");
-            try res.move.as_uci_str(w);
-            _ = try w.write("\n");
-        }
-    };
-}
+    pub fn handle_position(self: *UCI, input: []const u8) !void {
+        self.board = pos: {
+            if (std.mem.startsWith(u8, input, "position startpos")) break :pos board.default_board();
+            if (!std.mem.startsWith(u8, input, "position fen")) return error.InvalidPositionCommand;
+            const fen_start = "position fen".len;
+            const fen_end = std.mem.indexOf(u8, input, " moves") orelse input.len;
+            break :pos try board.board_from_fen(input[fen_start..fen_end]);
+        };
+        movegen.push_repetition(self.board.hash);
+
+        const moves_start = (std.mem.indexOf(u8, input, " moves ") orelse return) + " moves ".len;
+        self.board = try process_moves(self.board, input[moves_start..]);
+    }
+
+    pub fn handle_go(self: *UCI, input: []const u8) !void {
+        //TODO handle options
+        _ = input;
+
+        // highly likley that there a many positions from the last
+        // search that had incomplete bounds when the timer cut off
+        // the search, clearing this increases the seach stablilty at
+        // the cost of performance
+        tt.clear();
+
+        const res = try search.do_search(self);
+        self.last_best_move = res.move;
+
+        const w = self.buf_writer.writer();
+        _ = try w.write("bestmove ");
+        try res.move.as_uci_str(w);
+        _ = try w.write("\n");
+        return self.buf_writer.flush();
+    }
+};
 
 fn nps(time_ns: u64, nodes: usize) f64 {
     const n: f64 = @floatFromInt(nodes);
@@ -204,11 +215,30 @@ fn get_uci_command(input: []const u8) !UciCommand {
     return error.InvalidUciCommand;
 }
 
-pub fn process_moves(b: Board, move_str: []const u8) !Board {
-    var it = std.mem.splitScalar(u8, move_str, ' ');
+pub fn parse_uci_move_legal(b: Board, move: []const u8) !Move {
+    const m = try movegen.new_move_from_uci(move, &b);
+
+    std.log.debug("trying move: ", .{});
+    m.log(std.log.debug);
+    std.log.debug("", .{});
+
+    var ml = movegen.MoveList.new(&b);
+    movegen.gen_moves(&ml, b.is_in_check());
+
+    while (ml.next()) |legal_move| {
+        legal_move.log(std.log.debug);
+
+        if (movegen.moves_eq(legal_move, m)) return m;
+    }
+
+    return error.IllegalMove;
+}
+
+pub fn process_moves(b: Board, moves: []const u8) !Board {
+    var it = std.mem.splitScalar(u8, moves, ' ');
     var curr = b;
     while (it.next()) |s| {
-        const m = try movegen.new_move_from_uci(s, &curr);
+        const m = try parse_uci_move_legal(curr, s);
         var next: Board = undefined;
         curr.copy_make(&next, m);
         curr = next;

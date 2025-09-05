@@ -1,9 +1,18 @@
 const std = @import("std");
 
-// const ANDROID_TARGET_QUERY: std.Target.Query = .{ .cpu_arch = ., .os_tag = .linux };
-const ANDROID_TARGET_QUERY: std.Target.Query = .{
+const ANDROID_TARGET_x86_64_QUERY: std.Target.Query = .{
     .cpu_arch = .x86_64,
-    .abi = .androideabi,
+    .abi = .android,
+};
+
+const ANDROID_TARGET_AARCH64_QUERY: std.Target.Query = .{
+    .cpu_arch = .aarch64,
+    .abi = .android,
+};
+
+const LibConfig = struct {
+    target: std.Build.ResolvedTarget,
+    libc_file: std.Build.LazyPath,
 };
 
 const ExeConfig = struct {
@@ -39,6 +48,54 @@ const exes = [_]ExeConfig{
         .desc = "Run strength testing",
     },
 };
+
+fn add_app_lib(
+    b: *std.Build,
+    consts_out: std.Build.LazyPath,
+    optimize: std.builtin.OptimizeMode,
+    ndk_sysroot: ?[]const u8,
+    min_sdk_ver: ?usize,
+    conf: LibConfig,
+) *std.Build.Step.InstallArtifact {
+    const arch = @tagName(conf.target.result.cpu.arch);
+
+    const libapp_root = b.createModule(.{
+        .root_source_file = b.path("src/android.zig"),
+        .target = conf.target,
+        .optimize = optimize,
+        // .single_threaded = true, ??
+    });
+    libapp_root.pic = true;
+    libapp_root.addAnonymousImport("consts", .{ .root_source_file = consts_out });
+    libapp_root.addIncludePath(b.path("include"));
+
+    const libcrig = b.addLibrary(.{
+        .linkage = .dynamic,
+        .name = "crig",
+        .root_module = libapp_root,
+    });
+    libcrig.linkLibC();
+    libcrig.setLibCFile(conf.libc_file);
+
+    const ndk_lib_path = std.fmt.allocPrint(b.allocator, "{s}/usr/lib/{s}-linux-android/{d}/", .{
+        ndk_sysroot orelse "",
+        arch,
+        min_sdk_ver orelse 0,
+    }) catch |err| {
+        std.zig.fatal("could not alloc ndk lib path: {s}", .{@errorName(err)});
+    };
+
+    libcrig.addLibraryPath(.{ .cwd_relative = ndk_lib_path });
+    libcrig.linkSystemLibrary2("log", .{ .needed = true });
+
+    libcrig.addRPath(.{ .cwd_relative = "/system/lib64/" });
+
+    const subpath = std.fmt.allocPrint(b.allocator, "{s}/libcrig.so", .{arch}) catch |err| {
+        std.zig.fatal("could not alloc subpath: {s}", .{@errorName(err)});
+    };
+
+    return b.addInstallArtifact(libcrig, .{ .dest_sub_path = subpath });
+}
 
 fn add_runnable_exe(
     b: *std.Build,
@@ -76,7 +133,8 @@ fn add_runnable_exe(
 // declaratively construct a build graph that will be executed by an external
 // runner.
 pub fn build(b: *std.Build) void {
-    const ndk_libc = b.option([]const u8, "ndk_libc", "directory containing the libc_musl.so to link to");
+    const ndk_sysroot = b.option([]const u8, "ndk_sysroot", "Path to NDK sysroot");
+    const android_min_sdk = b.option(usize, "android_min_sdk", "Minimum target SDK for the android api");
 
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
@@ -100,32 +158,21 @@ pub fn build(b: *std.Build) void {
     const consts_step = b.addRunArtifact(consts);
     const consts_out = consts_step.addOutputFileArg("buildtime_consts.zig");
 
-    const libapp_root = b.createModule(.{
-        .root_source_file = b.path("src/android.zig"),
-        .target = b.resolveTargetQuery(ANDROID_TARGET_QUERY),
-        .optimize = optimize,
-        .single_threaded = true,
-    });
-
-    if (ndk_libc) |path| libapp_root.addLibraryPath(.{ .cwd_relative = path });
-    libapp_root.addAnonymousImport("consts", .{ .root_source_file = consts_out });
-    libapp_root.addIncludePath(b.path("include"));
-    // libapp_root.addObjectFile(.{ .cwd_relative = "/home/george/Android/Sdk/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/musl/lib/libc_musl.so" });
-
-    const libcrig = b.addLibrary(.{
-        .linkage = .dynamic,
-        .name = "crig",
-        .root_module = libapp_root,
-    });
-
-    // libcrig.linkLibC();
-    libcrig.linkSystemLibrary("c_musl");
-    const libcrig_install = b.addInstallArtifact(libcrig, .{});
-
-    const libapp_step = b.step("app", "Compile Android App Static Library");
-    libapp_step.dependOn(&libcrig_install.step);
-
     for (exes) |exe_config| {
         add_runnable_exe(b, exe_config, consts_out, optimize, target);
+    }
+
+    const libconfs = [_]LibConfig{ .{
+        .target = b.resolveTargetQuery(ANDROID_TARGET_x86_64_QUERY),
+        .libc_file = b.path("include/android_libc_x86_64.conf"),
+    }, .{
+        .target = b.resolveTargetQuery(ANDROID_TARGET_AARCH64_QUERY),
+        .libc_file = b.path("include/android_libc_aarch64.conf"),
+    } };
+
+    const libapp_step = b.step("app", "Installs the android libraries");
+    for (libconfs) |conf| {
+        const install_step = add_app_lib(b, consts_out, optimize, ndk_sysroot, android_min_sdk, conf);
+        libapp_step.dependOn(&install_step.step);
     }
 }

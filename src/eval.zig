@@ -203,7 +203,7 @@ fn mvvlva(piece: Piece, xpiece: Piece) i32 {
 }
 
 pub fn score_move(m: Move, b: *const Board, tt_bestmove: ?Move) i32 {
-    if (tt_bestmove) |bm| if (movegen.moves_eql(m, bm)) return TT_BEST_SCORE;
+    if (tt_bestmove) |bm| if (movegen.moves_eq(m, bm)) return TT_BEST_SCORE;
 
     return switch (m.mt) {
         .QUIET, .DOUBLE, .WKINGSIDE, .BKINGSIDE, .WQUEENSIDE, .BQUEENSIDE => PIECE_VALS[@intFromEnum(m.piece)],

@@ -8,7 +8,7 @@ const util = @import("util.zig");
 const log = std.log;
 const tt = @import("tt.zig");
 
-pub const std_options = .{ .log_level = std.log.Level.debug };
+// pub const std_options = .{ .log_level = std.log.Level.debug };
 
 pub fn main() !void {
     try perft_fen(null, 6, 119060324);

@@ -92,10 +92,11 @@ pub const Move = packed struct {
     }
 };
 
-pub fn moves_eql(m1: Move, m2: Move) bool {
+pub fn moves_eq(m1: Move, m2: Move) bool {
     return @as(u28, @bitCast(m1)) == @as(u28, @bitCast(m2));
 }
 
+// TODO should really do some testing on this one
 pub fn new_move_from_uci(uci: []const u8, b: *const Board) !Move {
     if (uci.len < 4 or uci.len > 5) {
         return error.InvalidUciStrLen;
@@ -118,7 +119,7 @@ pub fn new_move_from_uci(uci: []const u8, b: *const Board) !Move {
 
     // check for double push
     const diff = if (from < to) to - from else from - to;
-    if (@intFromEnum(piece) < @intFromEnum(Piece.KNIGHT) and diff == 2) {
+    if (@intFromEnum(piece) < @intFromEnum(Piece.KNIGHT) and diff == 16) {
         mt = MoveType.DOUBLE;
     }
 
@@ -219,6 +220,7 @@ pub const MoveList = struct {
         return .{ .move = m.?, .score = best_score };
     }
 
+    // TODO needed?
     pub fn reset(self: *MoveList) void {
         self.idx = 0;
         self.count = 0;
@@ -259,6 +261,7 @@ pub const MoveList = struct {
         }
     }
 
+    // TODO needed?
     fn sort(self: *MoveList) void {
         _ = self;
     }
@@ -686,7 +689,6 @@ pub fn is_legal_move(b: *const Board, m: Move, checked: bool) bool {
 
     // check if moved into check
     const ksq: usize = @ctz(b.piece_bb(Piece.KING, b.ctm.opp()));
-
     if ((square(m.to) | square(m.from)) & super_moves[ksq] > 0 and b.attackers_of_sq(ksq, b.ctm) > 0) {
         return false;
     }

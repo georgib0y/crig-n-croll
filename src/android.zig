@@ -2,18 +2,57 @@ const std = @import("std");
 const board = @import("board.zig");
 const UCI = @import("uci.zig").UCI;
 const perft = @import("perft.zig");
-
-const AppUci = UCI(std.io.NullWriter);
+// const PosixTimer = @import("timer.zig").PosixTimer;
+const ZigTimer = @import("timer.zig").ZigTimer;
+const util = @import("util.zig");
 
 const C = @cImport({
     @cInclude("jni.h");
+    @cInclude("log.h");
 });
+
+// TODO these are functions not supported in andoid libc !!
+pub export fn __errno_location() callconv(.C) ?*c_int {
+    return null;
+}
+
+// TODO these are functions not supported in andoid libc !!
+pub export fn getcontext(ucp: *anyopaque) c_int {
+    _ = ucp;
+    return -99;
+}
+
+// TODO these are functions not supported in andoid libc !!
+pub export fn setcontext(ucp: *const anyopaque) c_int {
+    _ = ucp;
+    return -98;
+}
+
+pub fn writeLogToAndroid(context: void, bytes: []const u8) !usize {
+    _ = context;
+    const str = try allocator.dupeZ(u8, bytes);
+    defer allocator.free(str);
+
+    if (C.__android_log_print(C.ANDROID_LOG_DEBUG, "UCI", str) != 1) {
+        return error.CouldNotLogToAndroid;
+    }
+
+    return str.len;
+}
+
+const androidLogWriter = std.io.GenericWriter(void, anyerror, writeLogToAndroid){
+    .context = {},
+};
 
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const allocator = arena.allocator();
 
 fn new_string(env: *C.JNIEnv, str: [:0]const u8) C.jstring {
     return env.*.*.NewStringUTF.?(env, str[0..str.len :0]);
+}
+
+fn get_string(env: *C.JNIEnv, str: C.jstring) []const u8 {
+    return std.mem.span(env.*.*.GetStringUTFChars.?(env, str, 0));
 }
 
 fn throw_uci_exception(
@@ -43,12 +82,9 @@ fn throw_uci_exception(
     return env.*.*.ThrowNew.?(env, class, buf[0..msg.len :0]);
 }
 
-pub export fn Java_com_github_georgib0y_crigapp_UCI_initUci(
-    env: *C.JNIEnv,
-    this: C.jobject,
-) ?*AppUci {
+pub export fn Java_com_github_georgib0y_crigapp_UCI_initUci(env: *C.JNIEnv, this: C.jobject) callconv(.C) ?*UCI {
     _ = this;
-    return AppUci.init(allocator, board.default_board(), std.io.null_writer, null) catch |err| {
+    return UCI.init(allocator, board.default_board(), androidLogWriter.any(), null) catch |err| {
         _ = throw_uci_exception(env, err, "could not init uci");
         return null;
     };
@@ -57,7 +93,7 @@ pub export fn Java_com_github_georgib0y_crigapp_UCI_initUci(
 pub export fn Java_com_github_georgib0y_crigapp_UCI_uciNewGame(
     env: *C.JNIEnv,
     this: C.jobject,
-    uci: *AppUci,
+    uci: *UCI,
 ) callconv(.C) void {
     _ = env;
     _ = this;
@@ -68,7 +104,7 @@ pub export fn Java_com_github_georgib0y_crigapp_UCI_uciNewGame(
 pub export fn Java_com_github_georgib0y_crigapp_UCI_sendPosition(
     env: *C.JNIEnv,
     this: C.jobject,
-    uci: *AppUci,
+    uci: *UCI,
     pos_str: C.jstring,
 ) callconv(.C) C.jstring {
     _ = this;
@@ -78,7 +114,7 @@ pub export fn Java_com_github_georgib0y_crigapp_UCI_sendPosition(
         return null;
     }
 
-    const pos_slice: []const u8 = std.mem.span(env.*.*.GetStringUTFChars.?(env, pos_str, 0));
+    const pos_slice = get_string(env, pos_str);
     uci.handle_position(pos_slice) catch |err| {
         _ = throw_uci_exception(env, err, "could not set position");
         return null;
@@ -113,4 +149,31 @@ pub export fn Java_com_github_georgib0y_crigapp_UCI_sendPosition(
     // return new_string(env, fbs.getWritten());
     return env.*.*.NewStringUTF.?(env, best_move[0..end :0]);
     // return new_string(env, "new string");
+}
+
+pub export fn Java_com_github_georgib0y_crigapp_UCI_logUciPosition(
+    env: *C.JNIEnv,
+    this: C.jobject,
+    uci: *UCI,
+    pos_str: C.jstring,
+) void {
+    _ = this;
+
+    uci.handle_position(get_string(env, pos_str)) catch |err| {
+        _ = throw_uci_exception(env, err, "could not set position for logging");
+        return;
+    };
+
+    var buf: [1024]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+    const writer = fbs.writer();
+
+    util.display_board(uci.board, writer) catch |err| {
+        _ = throw_uci_exception(env, err, "failed to write uci position");
+    };
+
+    _ = writeLogToAndroid({}, fbs.getWritten()) catch |err| {
+        _ = throw_uci_exception(env, err, "failed to log uci position");
+        return;
+    };
 }
