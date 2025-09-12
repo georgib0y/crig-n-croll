@@ -82,7 +82,7 @@ fn add_app_lib(
         arch,
         min_sdk_ver orelse 0,
     }) catch |err| {
-        std.zig.fatal("could not alloc ndk lib path: {s}", .{@errorName(err)});
+        std.process.fatal("could not alloc ndk lib path: {s}", .{@errorName(err)});
     };
 
     libcrig.addLibraryPath(.{ .cwd_relative = ndk_lib_path });
@@ -91,7 +91,7 @@ fn add_app_lib(
     libcrig.addRPath(.{ .cwd_relative = "/system/lib64/" });
 
     const subpath = std.fmt.allocPrint(b.allocator, "{s}/libcrig.so", .{arch}) catch |err| {
-        std.zig.fatal("could not alloc subpath: {s}", .{@errorName(err)});
+        std.process.fatal("could not alloc subpath: {s}", .{@errorName(err)});
     };
 
     return b.addInstallArtifact(libcrig, .{ .dest_sub_path = subpath });
@@ -106,9 +106,11 @@ fn add_runnable_exe(
 ) void {
     const exe = b.addExecutable(.{
         .name = exe_config.name,
-        .root_source_file = b.path(exe_config.root_src),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(exe_config.root_src),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
 
     exe.root_module.addAnonymousImport("consts", .{
@@ -150,9 +152,12 @@ pub fn build(b: *std.Build) void {
     // generate the magics at build time
     const consts = b.addExecutable(.{
         .name = "buildtime_consts_gen",
-        .root_source_file = b.path("src/buildtime_consts.zig"),
-        .target = b.graph.host,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/buildtime_consts.zig"),
+            .target = b.graph.host,
+            // .optimize = b.optimize,
+            .optimize = .ReleaseFast,
+        }),
     });
 
     const consts_step = b.addRunArtifact(consts);

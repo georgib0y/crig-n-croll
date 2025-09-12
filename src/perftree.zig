@@ -12,7 +12,7 @@ fn perftree(b: *Board, depth: usize) usize {
 
     var mc: usize = 0;
 
-    var ml = movegen.MoveList.new(b);
+    var ml = movegen.MoveList.new(b, null);
     const checked = b.is_in_check();
     movegen.gen_moves(&ml, checked);
 
@@ -30,10 +30,10 @@ fn perftree(b: *Board, depth: usize) usize {
     return mc;
 }
 
-fn perftree_root(w: anytype, b: *Board, depth: usize) !void {
+fn perftree_root(w: *std.Io.Writer, b: *Board, depth: usize) !void {
     var total_mc: usize = 0;
 
-    var ml = movegen.MoveList.new(b);
+    var ml = movegen.MoveList.new(b, null);
     const checked = b.is_in_check();
     movegen.gen_moves(&ml, checked);
 
@@ -48,10 +48,10 @@ fn perftree_root(w: anytype, b: *Board, depth: usize) !void {
         const mc = perftree(&next, depth - 1);
         total_mc += mc;
         try m.as_uci_str(w);
-        try std.fmt.format(w, " {d}\n", .{mc});
+        try w.print(" {d}\n", .{mc});
     }
 
-    try std.fmt.format(w, "\n{d}\n", .{total_mc});
+    try w.print("\n{d}\n", .{total_mc});
 }
 
 pub fn main() !void {
@@ -75,5 +75,8 @@ pub fn main() !void {
         return error.TooManyArgs;
     }
 
-    try perftree_root(std.io.getStdOut().writer(), &b, depth);
+    var stdout = std.fs.File.stdout();
+    var buf: [1024]u8 = undefined;
+    var writer = stdout.writer(&buf);
+    try perftree_root(&writer.interface, &b, depth);
 }

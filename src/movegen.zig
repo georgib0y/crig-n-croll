@@ -74,16 +74,16 @@ pub const Move = packed struct {
 
     pub fn log(self: Move, comptime log_fn: fn (comptime []const u8, anytype) void) void {
         var buf: [256]u8 = undefined;
-        var fbs = std.io.fixedBufferStream(&buf);
-        self.display(fbs.writer()) catch unreachable;
-        log_fn("{s}", .{fbs.getWritten()});
+        var w = std.Io.Writer.fixed(&buf);
+        self.display(&w) catch unreachable;
+        log_fn("{s}", .{w.buffered()});
     }
 
-    pub fn display(self: Move, w: anytype) !void {
+    pub fn display(self: Move, w: *std.Io.Writer) !void {
         try util.display_move(self, w);
     }
 
-    pub fn as_uci_str(self: Move, w: anytype) !void {
+    pub fn as_uci_str(self: Move, w: *std.Io.Writer) !void {
         try util.move_as_uci_str(self, w);
     }
 
@@ -94,6 +94,29 @@ pub const Move = packed struct {
 
 pub fn moves_eq(m1: Move, m2: Move) bool {
     return @as(u28, @bitCast(m1)) == @as(u28, @bitCast(m2));
+}
+
+const UciMoveParseError = error{ InvalidUciStrLen, InvalidUciStrFromPiece, IllegalMove };
+
+pub const UciMoveParseErrorInfo = struct { err: UciMoveParseError, move: []const u8 };
+
+pub fn parse_uci_move_legal(b: Board, move: []const u8) !Move {
+    const m = try new_move_from_uci(move, &b);
+
+    std.log.debug("trying move: ", .{});
+    m.log(std.log.debug);
+    std.log.debug("", .{});
+
+    var ml = MoveList.new(&b, null);
+    gen_moves(&ml, b.is_in_check());
+
+    while (ml.next()) |legal_move| {
+        legal_move.log(std.log.debug);
+
+        if (moves_eq(legal_move, m)) return m;
+    }
+
+    return error.IllegalMove;
 }
 
 // TODO should really do some testing on this one
@@ -124,11 +147,10 @@ pub fn new_move_from_uci(uci: []const u8, b: *const Board) !Move {
     }
 
     if (@intFromEnum(piece) >= @intFromEnum(Piece.KING) and diff == 2) {
-        if (b.ctm == Colour.WHITE) {
-            mt = if (from < to) MoveType.WKINGSIDE else MoveType.WQUEENSIDE;
-        } else {
-            mt = if (from < to) MoveType.WKINGSIDE else MoveType.WQUEENSIDE;
-        }
+        mt = switch (b.ctm) {
+            .WHITE => if (from < to) MoveType.WKINGSIDE else MoveType.WQUEENSIDE,
+            .BLACK => if (from < to) MoveType.BKINGSIDE else MoveType.BQUEENSIDE,
+        };
     }
 
     var xpiece = b.get_piece(to);
@@ -164,21 +186,23 @@ pub const MoveList = struct {
     idx: usize,
     count: usize,
     board: *const Board,
+    pv_move: ?Move,
     tt_bestmove: ?Move,
 
-    pub fn new(b: *const Board) MoveList {
+    pub fn new(b: *const Board, pv_move: ?Move) MoveList {
         return MoveList{
             .moves = undefined,
             .scores = undefined,
             .idx = 0,
             .count = 0,
             .board = b,
+            .pv_move = pv_move,
             .tt_bestmove = tt.get_best_move(b.hash),
         };
     }
 
     fn append(self: *MoveList, m: Move) void {
-        self.scores[self.count] = eval.score_move(m, self.board, self.tt_bestmove);
+        self.scores[self.count] = eval.score_move(m, self.board, self.pv_move, self.tt_bestmove);
         self.moves[self.count] = m;
         self.count += 1;
     }

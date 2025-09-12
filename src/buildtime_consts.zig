@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 
 const board = @import("board.zig");
 const BB = board.BB;
@@ -117,32 +118,32 @@ pub fn init_super_moves() void {
     }
 }
 
-fn write_int_array(w: anytype, comptime T: type, a: []const T, name: []const u8) !void {
-    try std.fmt.format(w, "pub const {s}: [{d}]{s} = .{{\n", .{ name, a.len, @typeName(T) });
+fn write_int_array(w: *Io.Writer, comptime T: type, a: []const T, name: []const u8) !void {
+    try w.print("pub const {s}: [{d}]{s} = .{{\n", .{ name, a.len, @typeName(T) });
     for (a) |i| {
-        try std.fmt.format(w, "\t{d},\n", .{i});
+        try w.print("\t{d},\n", .{i});
     }
-    try std.fmt.format(w, "}};\n", .{});
+    try w.print("}};\n", .{});
 }
 
-fn write_mt_array(w: anytype, s: comptime_int, a: [][s]BB, name: []const u8) !void {
-    try std.fmt.format(w, "pub const {s}: [{d}][{d}]BB = .{{\n", .{ name, a.len, a[0].len });
+fn write_mt_array(w: *Io.Writer, s: comptime_int, a: [][s]BB, name: []const u8) !void {
+    try w.print("pub const {s}: [{d}][{d}]BB = .{{\n", .{ name, a.len, a[0].len });
     for (a) |sqs| {
-        try std.fmt.format(w, "\t.{{", .{});
+        try w.print("\t.{{", .{});
         for (sqs) |sq| {
-            try std.fmt.format(w, "0x{X}, ", .{sq});
+            try w.print("0x{X}, ", .{sq});
         }
-        try std.fmt.format(w, "}},\n", .{});
+        try w.print("}},\n", .{});
     }
-    try std.fmt.format(w, "}};\n", .{});
+    try w.print("}};\n", .{});
 }
 
-fn write_sq_mag(w: anytype, a: []SquareMagic, name: []const u8) !void {
-    try std.fmt.format(w, "pub const {s}: [{d}]SquareMagic = .{{\n", .{ name, a.len });
+fn write_sq_mag(w: *Io.Writer, a: []SquareMagic, name: []const u8) !void {
+    try w.print("pub const {s}: [{d}]SquareMagic = .{{\n", .{ name, a.len });
     for (a) |m| {
-        try std.fmt.format(w, "\t.{{ .mask = 0x{X}, .magic = 0x{X}}},\n", .{ m.mask, m.magic });
+        try w.print("\t.{{ .mask = 0x{X}, .magic = 0x{X}}},\n", .{ m.mask, m.magic });
     }
-    try std.fmt.format(w, "}};\n", .{});
+    try w.print("}};\n", .{});
 }
 
 pub fn main() !void {
@@ -164,14 +165,16 @@ pub fn main() !void {
     const output_file_path = args[1];
 
     var output_file = std.fs.cwd().createFile(output_file_path, .{}) catch |err| {
-        std.zig.fatal("could not open {s} : {s}", .{ output_file_path, @errorName(err) });
+        std.process.fatal("could not open {s} : {s}", .{ output_file_path, @errorName(err) });
     };
     defer output_file.close();
 
-    const w = output_file.writer();
+    var buf: [1024]u8 = undefined;
+    var writer = output_file.writer(&buf);
+    var w = &writer.interface;
 
-    try std.fmt.format(w, "const BB = u64;\n", .{});
-    try std.fmt.format(w, "const SquareMagic = struct {{ mask: BB, magic: u64 }};\n", .{});
+    try w.print("const BB = u64;\n", .{});
+    try w.print("const SquareMagic = struct {{ mask: BB, magic: u64 }};\n", .{});
 
     try write_int_array(w, u64, &zobrist, "zobrist");
 
@@ -212,6 +215,7 @@ pub fn main() !void {
     try write_mt_array(w, 4096, &rook_move_table, "rook_move_table");
     try write_mt_array(w, 512, &bishop_move_table, "bishop_move_table");
 
+    try w.flush();
     return std.process.cleanExit();
 }
 

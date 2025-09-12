@@ -12,37 +12,55 @@ const C = @cImport({
 });
 
 // TODO these are functions not supported in andoid libc !!
-pub export fn __errno_location() callconv(.C) ?*c_int {
+pub export fn __errno_location() callconv(.c) ?*c_int {
     return null;
 }
 
 // TODO these are functions not supported in andoid libc !!
-pub export fn getcontext(ucp: *anyopaque) c_int {
+pub export fn getcontext(ucp: *anyopaque) callconv(.c) c_int {
     _ = ucp;
     return -99;
 }
 
 // TODO these are functions not supported in andoid libc !!
-pub export fn setcontext(ucp: *const anyopaque) c_int {
+pub export fn setcontext(ucp: *const anyopaque) callconv(.c) c_int {
     _ = ucp;
     return -98;
 }
 
-pub fn writeLogToAndroid(context: void, bytes: []const u8) !usize {
-    _ = context;
-    const str = try allocator.dupeZ(u8, bytes);
-    defer allocator.free(str);
+pub fn drainToAndroid(w: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
+    if (splat > 0) return std.Io.Writer.Error.WriteFailed;
+
+    var bArray = std.ArrayList(u8).empty;
+    defer bArray.deinit(allocator);
+
+    bArray.appendSlice(allocator, w.buffered()) catch return std.Io.Writer.Error.WriteFailed;
+    for (data[0 .. data.len - 1]) |bytes|
+        bArray.appendSlice(allocator, bytes) catch return std.Io.Writer.Error.WriteFailed;
+
+    bArray.append(allocator, 0) catch return std.Io.Writer.Error.WriteFailed;
+
+    const str: [:0]u8 = @ptrCast(bArray.items);
 
     if (C.__android_log_print(C.ANDROID_LOG_DEBUG, "UCI", str) != 1) {
-        return error.CouldNotLogToAndroid;
+        return std.Io.Writer.Error.WriteFailed;
     }
 
     return str.len;
 }
 
-const androidLogWriter = std.io.GenericWriter(void, anyerror, writeLogToAndroid){
-    .context = {},
+var androidLogBuffer: [2048]u8 = undefined;
+const androidLogVtable: std.Io.Writer.VTable = .{
+    .drain = drainToAndroid,
 };
+var androidLogWriter = std.Io.Writer{
+    .vtable = &androidLogVtable,
+    .buffer = &androidLogBuffer,
+    .end = 0,
+};
+// const androidLogWriter = std.io.GenericWriter(void, anyerror, writeLogToAndroid){
+//     .context = {},
+// };
 
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const allocator = arena.allocator();
@@ -82,9 +100,9 @@ fn throw_uci_exception(
     return env.*.*.ThrowNew.?(env, class, buf[0..msg.len :0]);
 }
 
-pub export fn Java_com_github_georgib0y_crigapp_UCI_initUci(env: *C.JNIEnv, this: C.jobject) callconv(.C) ?*UCI {
+pub export fn Java_com_github_georgib0y_crigapp_UCI_initUci(env: *C.JNIEnv, this: C.jobject) callconv(.c) ?*UCI {
     _ = this;
-    return UCI.init(allocator, board.default_board(), androidLogWriter.any(), null) catch |err| {
+    return UCI.init(allocator, &androidLogWriter, board.default_board()) catch |err| {
         _ = throw_uci_exception(env, err, "could not init uci");
         return null;
     };
@@ -94,7 +112,7 @@ pub export fn Java_com_github_georgib0y_crigapp_UCI_uciNewGame(
     env: *C.JNIEnv,
     this: C.jobject,
     uci: *UCI,
-) callconv(.C) void {
+) callconv(.c) void {
     _ = env;
     _ = this;
     uci.handle_ucinewgame();
@@ -106,7 +124,7 @@ pub export fn Java_com_github_georgib0y_crigapp_UCI_sendPosition(
     this: C.jobject,
     uci: *UCI,
     pos_str: C.jstring,
-) callconv(.C) C.jstring {
+) callconv(.c) C.jstring {
     _ = this;
 
     if (pos_str == null) {
@@ -126,28 +144,28 @@ pub export fn Java_com_github_georgib0y_crigapp_UCI_sendPosition(
     };
 
     var best_move: [100]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&best_move);
-    const writer = fbs.writer();
+    var fixed = std.io.Writer.fixed(&best_move);
+    // const writer = fbs.writer();
 
     if (uci.last_best_move == null) {
         _ = throw_uci_exception(env, error.EmptyLastBestMove, null);
         return null;
     }
 
-    uci.last_best_move.?.as_uci_str(writer) catch |err| {
+    uci.last_best_move.?.as_uci_str(&fixed) catch |err| {
         _ = throw_uci_exception(env, err, "error writing best move");
         return null;
     };
 
     // write sentinel at bm end
-    const end = fbs.getPos() catch |err| {
-        _ = throw_uci_exception(env, err, null);
+    _ = fixed.write(&.{0}) catch |err| {
+        _ = throw_uci_exception(env, err, "error writing bm sentinel");
         return null;
     };
-    best_move[end] = 0;
 
+    const bm_str: [:0]u8 = @ptrCast(fixed.buffered());
     // return new_string(env, fbs.getWritten());
-    return env.*.*.NewStringUTF.?(env, best_move[0..end :0]);
+    return env.*.*.NewStringUTF.?(env, bm_str);
     // return new_string(env, "new string");
 }
 
@@ -164,16 +182,11 @@ pub export fn Java_com_github_georgib0y_crigapp_UCI_logUciPosition(
         return;
     };
 
-    var buf: [1024]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buf);
-    const writer = fbs.writer();
-
-    util.display_board(uci.board, writer) catch |err| {
-        _ = throw_uci_exception(env, err, "failed to write uci position");
+    util.display_board(uci.board, &androidLogWriter) catch |err| {
+        _ = throw_uci_exception(env, err, "failed to write uci board");
     };
 
-    _ = writeLogToAndroid({}, fbs.getWritten()) catch |err| {
-        _ = throw_uci_exception(env, err, "failed to log uci position");
-        return;
+    androidLogWriter.flush() catch |err| {
+        _ = throw_uci_exception(env, err, "failed to flush uci board");
     };
 }

@@ -11,7 +11,7 @@ const UCI = @import("uci.zig").UCI;
 // const ZigTimer = @import("timer.zig").ZigTimer;
 const Timer = @import("timer.zig").Timer;
 
-// const std_options: std.Options = std.Options{ .log_level = std.log.Level.debug };
+pub const std_options: std.Options = std.Options{ .log_level = std.log.Level.debug };
 
 const EpdMoveType = enum {
     Quiet,
@@ -106,10 +106,10 @@ fn parse_epd(allocator: std.mem.Allocator, str: []const u8) !EPD {
     var bm_id_it = std.mem.splitScalar(u8, bm_id_str, ';');
     const bm_str = bm_id_it.next() orelse return error.InvalidEDP;
 
-    var bms = std.ArrayList(EdpBestMove).init(allocator);
+    var bms = std.ArrayList(EdpBestMove).empty;
     var bm_it = std.mem.splitScalar(u8, bm_str, ' ');
     while (bm_it.next()) |s| {
-        try bms.append(try parse_bm(s, b.ctm));
+        try bms.append(allocator, try parse_bm(s, b.ctm));
     }
 
     const id_str = bm_id_it.next() orelse return error.InvalidEDP;
@@ -121,33 +121,36 @@ fn parse_epd(allocator: std.mem.Allocator, str: []const u8) !EPD {
     return EPD{
         .id = try allocator.dupe(u8, id),
         .pos = b,
-        .bms = try bms.toOwnedSlice(),
+        .bms = bms.items,
     };
 }
 
 fn epd_search(allocator: std.mem.Allocator, epd: EPD) !bool {
-    std.log.debug("====== trying {s} ======", .{epd.id});
+    std.log.info("trying {s}: ", .{epd.id});
     epd.pos.log(std.log.debug);
     for (epd.bms) |bm| {
         var buf: [4]u8 = undefined;
-        var fbs = std.io.fixedBufferStream(&buf);
-        try util.write_sq(fbs.writer(), bm.to);
-        std.log.debug("--- expected move {s} {s} ({d}) {s} ---", .{
+        var fixed = std.io.Writer.fixed(&buf);
+        try util.write_sq(&fixed, bm.to);
+        std.log.info("-- expecting move {s} {s} ({d}) {s}", .{
             @tagName(bm.piece),
-            fbs.getWritten(),
+            fixed.buffered(),
             bm.to,
             @tagName(bm.mt),
         });
     }
 
-    const stdout = std.io.getStdOut().writer().any();
-    var uci = try UCI.init(allocator, epd.pos, stdout, null);
+    var stdout = std.fs.File.stdout();
+    var buf: [1024]u8 = undefined;
+    var writer = stdout.writer(&buf);
+
+    var uci = try UCI.init(allocator, &writer.interface, epd.pos);
     defer uci.deinit(allocator);
 
     const res = search.do_search(uci) catch |err| {
         switch (err) {
-            error.NoResultFound => std.log.debug("{s} position failed low!", .{epd.id}),
-            else => std.log.debug("{s} unexpected error: {s}", .{ epd.id, @errorName(err) }),
+            error.NoResultFound => std.log.err("{s} position failed low!", .{epd.id}),
+            else => std.log.err("{s} unexpected error: {s}", .{ epd.id, @errorName(err) }),
         }
 
         return false;
@@ -163,8 +166,8 @@ fn epd_search(allocator: std.mem.Allocator, epd: EPD) !bool {
         if (matches) found_bm = true;
     }
 
-    std.log.debug("got: score = {d}", .{res.score});
-    res.move.log(std.log.debug);
+    std.log.info("-- got: ", .{});
+    res.move.log(std.log.info);
 
     return found_bm;
 }
@@ -206,15 +209,16 @@ pub fn main() !void {
 
     std.log.debug("start {d} end {?d}", .{ start, end });
 
-    const file = try std.fs.cwd().openFile(filename, .{});
-    const reader = file.reader();
+    var file = try std.fs.cwd().openFile(filename, .{});
+    var buf: [1024]u8 = undefined;
+    var file_reader = file.reader(&buf);
+    var reader = &file_reader.interface;
 
     var count: usize = 0;
     var passed_count: usize = 0;
     var failed_count: usize = 0;
 
-    var buf: [1024]u8 = undefined;
-    while (try reader.readUntilDelimiterOrEof(&buf, '\n')) |line| {
+    while (reader.takeDelimiterExclusive('\n')) |line| {
         if (count < start) {
             count += 1;
             continue;
@@ -228,7 +232,7 @@ pub fn main() !void {
 
         if (end) |e| if (count >= e) break;
         count += 1;
-    }
+    } else |err| if (err == std.io.Reader.DelimiterError.EndOfStream) return else return err;
 
     const total: usize = passed_count + failed_count;
     const percentage: f64 = @as(f64, @floatFromInt(passed_count)) / @as(f64, @floatFromInt(total)) * 100;

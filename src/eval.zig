@@ -124,6 +124,7 @@ pub fn board_score(b: *const Board) i32 {
 const PROMO_MOVE_SCORE = 5000;
 pub const CAP_MOVE_SCORE = 10000;
 const TT_BEST_SCORE = 1000000;
+const PV_BEST_SCORE = 1000001;
 
 fn least_valuable_attacker(b: *const Board, attackers: BB, ctm: Colour) struct { BB, Piece } {
     _ = ctm;
@@ -202,7 +203,11 @@ fn mvvlva(piece: Piece, xpiece: Piece) i32 {
     return PIECE_VALS[@intFromEnum(xpiece)] - PIECE_VALS[@intFromEnum(piece)];
 }
 
-pub fn score_move(m: Move, b: *const Board, tt_bestmove: ?Move) i32 {
+pub fn score_move(m: Move, b: *const Board, pv_move: ?Move, tt_bestmove: ?Move) i32 {
+    if (pv_move) |pv| if (movegen.moves_eq(m, pv)) {
+        return PV_BEST_SCORE;
+    };
+
     if (tt_bestmove) |bm| if (movegen.moves_eq(m, bm)) return TT_BEST_SCORE;
 
     return switch (m.mt) {

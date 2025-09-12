@@ -3,7 +3,7 @@ const board = @import("board.zig");
 const UCI = @import("uci.zig").UCI;
 const ZigTimer = @import("timer.zig").ZigTimer;
 
-// pub const std_options = .{ .log_level = std.log.Level.debug };
+pub const std_options = std.Options{ .log_level = std.log.Level.debug };
 
 fn new_log_file() !std.fs.File {
     const logdir = try std.fs.cwd().openDir("logs", .{});
@@ -19,9 +19,14 @@ pub fn main() !void {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const log_file = try new_log_file();
-    const stdout = std.io.getStdOut().writer().any();
-    var game = try UCI.init(allocator, board.default_board(), stdout, log_file);
+    // const log_file = try new_log_file();
+    var stdout = std.fs.File.stdout();
+    var wbuf: [1024]u8 = undefined;
+    var writer = stdout.writer(&wbuf);
+    var game = try UCI.init(allocator, &writer.interface, board.default_board());
 
-    try game.run();
+    var stdin = std.fs.File.stdin();
+    var rbuf: [1024]u8 = undefined;
+    var reader = stdin.reader(&rbuf);
+    try game.run(&reader.interface);
 }

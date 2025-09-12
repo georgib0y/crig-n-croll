@@ -401,8 +401,8 @@ pub const Board = struct {
         util.log_board(self, log_fn);
     }
 
-    pub fn display(self: Board, writer: anytype) !void {
-        try util.display_board(self, writer);
+    pub fn display(self: Board, w: *std.Io.Writer) !void {
+        try util.display_board(self, w);
     }
 };
 
