@@ -208,6 +208,29 @@ fn get_uci_command(input: []const u8) !UciCommand {
     return error.InvalidUciCommand;
 }
 
+// returns the index of badmove, otherwise returns null
+// TODO fen positioning
+pub fn validate_moves(position: []const u8) ?i32 {
+    if (std.mem.eql(u8, position, "position startpos")) return null;
+
+    const moves_start = (std.mem.indexOf(u8, position, " moves ") orelse return -999) + " moves ".len;
+    var it = std.mem.splitScalar(u8, position[moves_start..position.len], ' ');
+    var curr = board.default_board();
+    var idx: i32 = 0;
+    while (it.next()) |s| {
+        const m = movegen.parse_uci_move_legal(curr, s) catch {
+            return idx;
+        };
+        var next: Board = undefined;
+        curr.copy_make(&next, m);
+        curr = next;
+        movegen.push_repetition(curr.hash);
+        idx += 1;
+    }
+
+    return null;
+}
+
 pub fn process_moves(b: Board, moves: []const u8) !Board {
     var it = std.mem.splitScalar(u8, moves, ' ');
     var curr = b;

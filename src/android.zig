@@ -1,10 +1,16 @@
 const std = @import("std");
 const board = @import("board.zig");
-const UCI = @import("uci.zig").UCI;
+const uci = @import("uci.zig");
+const UCI = uci.UCI;
 const perft = @import("perft.zig");
 // const PosixTimer = @import("timer.zig").PosixTimer;
 const ZigTimer = @import("timer.zig").ZigTimer;
 const util = @import("util.zig");
+
+pub const std_options: std.Options = .{
+    .page_size_min = 16384,
+    .page_size_max = 16384,
+};
 
 const C = @cImport({
     @cInclude("jni.h");
@@ -29,14 +35,16 @@ pub export fn setcontext(ucp: *const anyopaque) callconv(.c) c_int {
 }
 
 pub fn drainToAndroid(w: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
-    if (splat > 0) return std.Io.Writer.Error.WriteFailed;
-
     var bArray = std.ArrayList(u8).empty;
     defer bArray.deinit(allocator);
 
     bArray.appendSlice(allocator, w.buffered()) catch return std.Io.Writer.Error.WriteFailed;
+
     for (data[0 .. data.len - 1]) |bytes|
         bArray.appendSlice(allocator, bytes) catch return std.Io.Writer.Error.WriteFailed;
+
+    for (0..splat) |_|
+        bArray.appendSlice(allocator, data[data.len - 1]) catch return std.Io.Writer.Error.WriteFailed;
 
     bArray.append(allocator, 0) catch return std.Io.Writer.Error.WriteFailed;
 
@@ -45,6 +53,8 @@ pub fn drainToAndroid(w: *std.Io.Writer, data: []const []const u8, splat: usize)
     if (C.__android_log_print(C.ANDROID_LOG_DEBUG, "UCI", str) != 1) {
         return std.Io.Writer.Error.WriteFailed;
     }
+
+    w.end = 0;
 
     return str.len;
 }
@@ -111,18 +121,35 @@ pub export fn Java_com_github_georgib0y_crigapp_UCI_initUci(env: *C.JNIEnv, this
 pub export fn Java_com_github_georgib0y_crigapp_UCI_uciNewGame(
     env: *C.JNIEnv,
     this: C.jobject,
-    uci: *UCI,
+    uci_instance: *UCI,
 ) callconv(.c) void {
     _ = env;
     _ = this;
-    uci.handle_ucinewgame();
+    uci_instance.handle_ucinewgame();
+}
+
+// returns -1 if there are no bad positions, else returns the idx of the bad move
+pub export fn Java_com_github_georgib0y_crigapp_UCI_validatePosition(
+    env: *C.JNIEnv,
+    this: C.jobject,
+    pos_str: C.jstring,
+) callconv(.c) C.jint {
+    _ = this;
+
+    if (pos_str == null) {
+        _ = throw_uci_exception(env, error.NullPosStr, null);
+        return -99;
+    }
+
+    const pos_slice = get_string(env, pos_str);
+    return uci.validate_moves(pos_slice) orelse -1;
 }
 
 // position is the position string as the uci protocol expects
-pub export fn Java_com_github_georgib0y_crigapp_UCI_sendPosition(
+pub export fn Java_com_github_georgib0y_crigapp_UCI_searchPosition(
     env: *C.JNIEnv,
     this: C.jobject,
-    uci: *UCI,
+    uci_instance: *UCI,
     pos_str: C.jstring,
 ) callconv(.c) C.jstring {
     _ = this;
@@ -133,12 +160,12 @@ pub export fn Java_com_github_georgib0y_crigapp_UCI_sendPosition(
     }
 
     const pos_slice = get_string(env, pos_str);
-    uci.handle_position(pos_slice) catch |err| {
+    uci_instance.handle_position(pos_slice) catch |err| {
         _ = throw_uci_exception(env, err, "could not set position");
         return null;
     };
 
-    uci.handle_go("go") catch |err| {
+    uci_instance.handle_go("go") catch |err| {
         _ = throw_uci_exception(env, err, "error while searching");
         return null;
     };
@@ -147,12 +174,12 @@ pub export fn Java_com_github_georgib0y_crigapp_UCI_sendPosition(
     var fixed = std.io.Writer.fixed(&best_move);
     // const writer = fbs.writer();
 
-    if (uci.last_best_move == null) {
+    if (uci_instance.last_best_move == null) {
         _ = throw_uci_exception(env, error.EmptyLastBestMove, null);
         return null;
     }
 
-    uci.last_best_move.?.as_uci_str(&fixed) catch |err| {
+    uci_instance.last_best_move.?.as_uci_str(&fixed) catch |err| {
         _ = throw_uci_exception(env, err, "error writing best move");
         return null;
     };
@@ -172,17 +199,17 @@ pub export fn Java_com_github_georgib0y_crigapp_UCI_sendPosition(
 pub export fn Java_com_github_georgib0y_crigapp_UCI_logUciPosition(
     env: *C.JNIEnv,
     this: C.jobject,
-    uci: *UCI,
+    uci_instance: *UCI,
     pos_str: C.jstring,
 ) void {
     _ = this;
 
-    uci.handle_position(get_string(env, pos_str)) catch |err| {
+    uci_instance.handle_position(get_string(env, pos_str)) catch |err| {
         _ = throw_uci_exception(env, err, "could not set position for logging");
         return;
     };
 
-    util.display_board(uci.board, &androidLogWriter) catch |err| {
+    util.display_board(uci_instance.board, &androidLogWriter) catch |err| {
         _ = throw_uci_exception(env, err, "failed to write uci board");
     };
 
