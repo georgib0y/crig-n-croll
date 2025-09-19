@@ -5,6 +5,10 @@ const Board = board.Board;
 const movegen = @import("movegen.zig");
 const uci = @import("uci.zig");
 
+pub const std_options: std.Options = .{
+    .log_level = .err,
+};
+
 fn perftree(b: *Board, depth: usize) usize {
     if (depth == 0) {
         return 1;
@@ -79,4 +83,5 @@ pub fn main() !void {
     var buf: [1024]u8 = undefined;
     var writer = stdout.writer(&buf);
     try perftree_root(&writer.interface, &b, depth);
+    try writer.interface.flush();
 }

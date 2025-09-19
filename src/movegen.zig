@@ -87,7 +87,7 @@ pub const Move = packed struct {
         try util.move_as_uci_str(self, w);
     }
 
-    fn new(from: usize, to: usize, piece: Piece, xpiece: Piece, mt: MoveType) Move {
+    pub fn new(from: usize, to: usize, piece: Piece, xpiece: Piece, mt: MoveType) Move {
         return Move{ .from = @intCast(from), .to = @intCast(to), .piece = piece, .xpiece = xpiece, .mt = mt };
     }
 };
@@ -103,7 +103,7 @@ pub const UciMoveParseErrorInfo = struct { err: UciMoveParseError, move: []const
 pub fn parse_uci_move_legal(b: Board, move: []const u8) !Move {
     const m = try new_move_from_uci(move, &b);
 
-    std.log.debug("trying move: ", .{});
+    std.log.debug("trying move: {s}", .{move});
     m.log(std.log.debug);
     std.log.debug("", .{});
 
@@ -181,14 +181,16 @@ pub fn new_move_from_uci(uci: []const u8, b: *const Board) !Move {
 }
 
 pub const MoveList = struct {
-    moves: [256]Move,
-    scores: [256]i32,
+    const LIST_SIZE = 256;
+    moves: [LIST_SIZE]Move,
+    scores: [LIST_SIZE]i32,
     idx: usize,
     count: usize,
     board: *const Board,
     pv_move: ?Move,
     tt_bestmove: ?Move,
 
+    // TODO take tt.get_best_move out of here? ( tho maybe cached from call in search()? )
     pub fn new(b: *const Board, pv_move: ?Move) MoveList {
         return MoveList{
             .moves = undefined,
@@ -207,6 +209,10 @@ pub const MoveList = struct {
         self.count += 1;
     }
 
+    // TODO move gen_moves and add state to MoveList, so that it
+    // generates attacks, depletes the list and then gens the quiets
+    // also could play with trying the TT bestmove for the position
+    // before generating anything
     pub fn next(self: *MoveList) ?Move {
         var m: ?Move = null;
         var idx: usize = 0;
@@ -259,12 +265,13 @@ pub const MoveList = struct {
         }
     }
 
-    fn add_pawn_moves_cap(self: *MoveList, pawns: BB, comptime piece: Piece, comptime to_offset: comptime_int, comptime mt: MoveType) void {
+    fn add_pawn_moves_cap(self: *MoveList, pawns: BB, comptime piece: Piece, comptime to_offset: comptime_int, comptime opp: Colour, comptime mt: MoveType) void {
         var p = pawns;
         while (p > 0) : (p &= p - 1) {
             const from: usize = @ctz(p);
             const to: usize = @intCast(@as(isize, @intCast(from)) + @as(isize, to_offset));
-            const xpiece = self.board.get_piece(to);
+            // const xpiece = self.board.get_piece(to);
+            const xpiece = self.board.get_piece_not_none(to, opp);
             self.append(Move.new(from, to, piece, xpiece, mt));
         }
     }
@@ -277,11 +284,12 @@ pub const MoveList = struct {
         }
     }
 
-    fn add_caps(self: *MoveList, from: usize, caps: BB, piece: Piece, mt: MoveType) void {
+    fn add_caps(self: *MoveList, from: usize, caps: BB, piece: Piece, opp: Colour, mt: MoveType) void {
         var c = caps;
         while (c > 0) : (c &= c - 1) {
             const to: usize = @ctz(c);
-            self.append(Move.new(from, to, piece, self.board.get_piece(to), mt));
+            // self.append(Move.new(from, to, piece, self.board.get_piece(to), mt));
+            self.append(Move.new(from, to, piece, self.board.get_piece_not_none(to, opp), mt));
         }
     }
 
@@ -304,6 +312,7 @@ fn wpawn_quiet(ml: *MoveList, pin_sqs: BB, target_sqs: BB) void {
 
     const promo = quiet & @intFromEnum(Rank.R7);
     if (promo > 0) {
+        @branchHint(.unlikely);
         for (PROMO_PIECES_W) |p| {
             ml.add_pawn_moves_quiet(promo, Piece.PAWN, 8, p, MoveType.PROMO);
         }
@@ -318,27 +327,30 @@ fn wpawn_attack(ml: *MoveList, pin_sqs: BB, target_sqs: BB) void {
     const att_right = (pawns & ~@intFromEnum(File.FH)) & (opp >> 9);
 
     // up left
-    ml.add_pawn_moves_cap(att_left & ~@intFromEnum(Rank.R7), Piece.PAWN, 7, MoveType.CAP);
+    ml.add_pawn_moves_cap(att_left & ~@intFromEnum(Rank.R7), Piece.PAWN, 7, .BLACK, MoveType.CAP);
     // up right
-    ml.add_pawn_moves_cap(att_right & ~@intFromEnum(Rank.R7), Piece.PAWN, 9, MoveType.CAP);
+    ml.add_pawn_moves_cap(att_right & ~@intFromEnum(Rank.R7), Piece.PAWN, 9, .BLACK, MoveType.CAP);
 
     const att_left_promo = att_left & @intFromEnum(Rank.R7);
     if (att_left_promo > 0) {
+        @branchHint(.unlikely);
         inline for (PROMO_CAP_MTS) |mt| {
-            ml.add_pawn_moves_cap(att_left_promo, Piece.PAWN, 7, mt);
+            ml.add_pawn_moves_cap(att_left_promo, Piece.PAWN, 7, .BLACK, mt);
         }
     }
 
     const att_right_promo = att_right & @intFromEnum(Rank.R7);
     if (att_right_promo > 0) {
+        @branchHint(.unlikely);
         inline for (PROMO_CAP_MTS) |mt| {
-            ml.add_pawn_moves_cap(att_right_promo, Piece.PAWN, 9, mt);
+            ml.add_pawn_moves_cap(att_right_promo, Piece.PAWN, 9, .BLACK, mt);
         }
     }
 }
 
 fn wpawn_ep(ml: *MoveList, pin_sqs: BB, target_sqs: BB) void {
     if (ml.board.ep >= 64) {
+        @branchHint(.likely);
         return;
     }
 
@@ -370,6 +382,7 @@ fn bpawn_quiet(ml: *MoveList, pin_sqs: BB, target_sqs: BB) void {
 
     const promo = quiet & @intFromEnum(Rank.R2);
     if (promo > 0) {
+        @branchHint(.unlikely);
         for (PROMO_PIECES_B) |p| {
             ml.add_pawn_moves_quiet(promo, Piece.PAWN_B, -8, p, MoveType.PROMO);
         }
@@ -384,27 +397,30 @@ fn bpawn_attack(ml: *MoveList, pin_sqs: BB, target_sqs: BB) void {
     const att_right = (pawns & ~@intFromEnum(File.FH)) & (opp << 7);
 
     // down left
-    ml.add_pawn_moves_cap(att_left & ~@intFromEnum(Rank.R2), Piece.PAWN_B, -9, MoveType.CAP);
+    ml.add_pawn_moves_cap(att_left & ~@intFromEnum(Rank.R2), Piece.PAWN_B, -9, .WHITE, MoveType.CAP);
     // down right
-    ml.add_pawn_moves_cap(att_right & ~@intFromEnum(Rank.R2), Piece.PAWN_B, -7, MoveType.CAP);
+    ml.add_pawn_moves_cap(att_right & ~@intFromEnum(Rank.R2), Piece.PAWN_B, -7, .WHITE, MoveType.CAP);
 
     const att_left_promo = att_left & @intFromEnum(Rank.R2);
     if (att_left_promo > 0) {
+        @branchHint(.unlikely);
         inline for (PROMO_CAP_MTS) |mt| {
-            ml.add_pawn_moves_cap(att_left_promo, Piece.PAWN_B, -9, mt);
+            ml.add_pawn_moves_cap(att_left_promo, Piece.PAWN_B, -9, .WHITE, mt);
         }
     }
 
     const att_right_promo = att_right & @intFromEnum(Rank.R2);
     if (att_right_promo > 0) {
+        @branchHint(.unlikely);
         inline for (PROMO_CAP_MTS) |mt| {
-            ml.add_pawn_moves_cap(att_right_promo, Piece.PAWN_B, -7, mt);
+            ml.add_pawn_moves_cap(att_right_promo, Piece.PAWN_B, -7, .WHITE, mt);
         }
     }
 }
 
 fn bpawn_ep(ml: *MoveList, pin_sqs: BB, target_sqs: BB) void {
     if (ml.board.ep >= 64) {
+        @branchHint(.likely);
         return;
     }
 
@@ -445,7 +461,7 @@ fn piece_attack(ml: *MoveList, comptime piece: Piece, comptime move_fn: fn (occ:
     while (pieces > 0) : (pieces &= pieces - 1) {
         const from: usize = @ctz(pieces);
         const moves: BB = move_fn(ml.board.all_bb(), from) & opp;
-        ml.add_caps(from, moves, piece.with_ctm(ml.board.ctm), MoveType.CAP);
+        ml.add_caps(from, moves, piece.with_ctm(ml.board.ctm), ml.board.ctm.opp(), MoveType.CAP);
     }
 }
 
@@ -591,6 +607,7 @@ fn pinned_sqs(b: *const Board, king_sq: usize) BB {
 }
 
 fn attacker_ray(b: *const Board, king_sq: usize, att_sq: usize) BB {
+    // if (square(att_sq) & consts.bishop_magics[king_sq].mask > 0) {
     if (king_sq % 8 == att_sq % 8 or king_sq / 8 == att_sq / 8) {
         return lookup_rook(b.all_bb(), king_sq) &
             lookup_rook(b.all_bb(), att_sq);
@@ -633,7 +650,8 @@ fn gen_check_moves(ml: *MoveList) void {
     const att_sq: usize = @ctz(attackers);
     // if the attacker is not a sliding piece then no other quiet moves will
     // make any difference
-    const att_piece = ml.board.get_piece(att_sq);
+    // const att_piece = ml.board.get_piece(att_sq);
+    const att_piece = ml.board.get_piece_not_none(att_sq, ml.board.ctm.opp());
     if (!att_piece.is_slider()) {
         return;
     }
@@ -663,6 +681,43 @@ pub fn gen_q_moves(ml: *MoveList) void {
     } else {
         bpawn_attack(ml, NO_SQUARES, ALL_SQUARES);
         bpawn_ep(ml, NO_SQUARES, ALL_SQUARES);
+    }
+}
+
+pub fn gen_piece_moves(ml: *MoveList, p: Piece) void {
+    switch (p) {
+        .QUEEN, .QUEEN_B => {
+            piece_attack(ml, Piece.QUEEN, queen_move_wrapper, NO_SQUARES, ALL_SQUARES);
+            piece_quiet(ml, Piece.QUEEN, queen_move_wrapper, NO_SQUARES, ALL_SQUARES);
+        },
+        .BISHOP, .BISHOP_B => {
+            piece_attack(ml, Piece.BISHOP, bishop_move_wrapper, NO_SQUARES, ALL_SQUARES);
+            piece_quiet(ml, Piece.BISHOP, bishop_move_wrapper, NO_SQUARES, ALL_SQUARES);
+        },
+        .ROOK, .ROOK_B => {
+            piece_attack(ml, Piece.ROOK, rook_move_wrapper, NO_SQUARES, ALL_SQUARES);
+            piece_quiet(ml, Piece.ROOK, rook_move_wrapper, NO_SQUARES, ALL_SQUARES);
+        },
+        .KNIGHT, .KNIGHT_B => {
+            piece_attack(ml, Piece.KNIGHT, knight_move_wrapper, NO_SQUARES, ALL_SQUARES);
+            piece_quiet(ml, Piece.KNIGHT, knight_move_wrapper, NO_SQUARES, ALL_SQUARES);
+        },
+        .KING, .KING_B => {
+            piece_attack(ml, Piece.KING, king_move_wrapper, NO_SQUARES, ALL_SQUARES);
+            piece_quiet(ml, Piece.KING, king_move_wrapper, NO_SQUARES, ALL_SQUARES);
+            king_castle(ml);
+        },
+        .PAWN => {
+            wpawn_attack(ml, NO_SQUARES, ALL_SQUARES);
+            wpawn_quiet(ml, NO_SQUARES, ALL_SQUARES);
+            wpawn_ep(ml, NO_SQUARES, ALL_SQUARES);
+        },
+        .PAWN_B => {
+            bpawn_attack(ml, NO_SQUARES, ALL_SQUARES);
+            bpawn_quiet(ml, NO_SQUARES, ALL_SQUARES);
+            bpawn_ep(ml, NO_SQUARES, ALL_SQUARES);
+        },
+        .NONE => {},
     }
 }
 
@@ -697,6 +752,7 @@ pub fn get_repetitions(hash: u64) usize {
 // assumes the move has already been applied to the board
 pub fn is_legal_move(b: *const Board, m: Move, checked: bool) bool {
     if (b.halfmove > 100 or get_repetitions(b.hash) > 2) return false;
+    if (get_repetitions(b.hash) > 2) return false;
 
     // checked has legal move gen and no casling is required
     if (checked) {
