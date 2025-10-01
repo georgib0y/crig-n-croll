@@ -120,7 +120,7 @@ pub fn algebraic_to_move(b: *const Board, algebraic: []const u8) !Move {
     var ml = movegen.MoveList.new(b, null);
     movegen.gen_piece_moves(&ml, piece);
 
-    std.log.info("in: {s}\npiece: {s}\nfile: {s}\nrank: {s}\ncap: {s}\nto: {d}\n", .{
+    std.log.debug("in: {s}\npiece: {s}\nfile: {s}\nrank: {s}\ncap: {s}\nto: {d}\n", .{
         algebraic,
         @tagName(piece),
         if (file) |f| @tagName(f) else "none",
@@ -130,14 +130,14 @@ pub fn algebraic_to_move(b: *const Board, algebraic: []const u8) !Move {
     });
 
     while (ml.next()) |m| {
-        std.log.info("trying move:", .{});
-        m.log(std.log.info);
+        std.log.debug("trying move:", .{});
+        m.log(std.log.debug);
 
         if (file) |f| if (board.square(m.from) & @intFromEnum(f) == 0) continue;
         if (rank) |r| if (board.square(m.from) & @intFromEnum(r) == 0) continue;
         if ((m.xpiece != .NONE) != cap) continue;
         if (m.to != to) continue;
-        std.log.info("matched!\n\n", .{});
+        std.log.debug("matched!\n\n", .{});
         return m;
     }
 
